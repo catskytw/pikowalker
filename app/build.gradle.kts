@@ -18,6 +18,13 @@ val buildNumber = (versionProps.getProperty("buildNumber")?.toIntOrNull() ?: 0) 
 versionProps.setProperty("buildNumber", buildNumber.toString())
 versionPropsFile.outputStream().use { versionProps.store(it, "Auto-incremented by build.gradle.kts — do not edit") }
 
+// GitHub Releases 更新檢查用的 read-only token，放在 local.properties（已 gitignore）避免進 git
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val githubUpdateToken = localProps.getProperty("github.updateToken") ?: ""
+
 android {
     namespace = "com.pikowalker.app"
     compileSdk = 35
@@ -28,6 +35,10 @@ android {
         targetSdk = 35
         versionCode = buildNumber
         versionName = "1.0.$buildNumber"
+
+        buildConfigField("String", "GITHUB_UPDATE_TOKEN", "\"$githubUpdateToken\"")
+        buildConfigField("String", "GITHUB_OWNER", "\"catskytw\"")
+        buildConfigField("String", "GITHUB_REPO", "\"pikowalker\"")
     }
 
     buildTypes {

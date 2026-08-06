@@ -43,7 +43,13 @@ import com.pikowalker.app.model.SavedRoute
 import com.pikowalker.app.model.ScheduleConfig
 import com.pikowalker.app.schedule.ScheduleManager
 import com.pikowalker.app.ui.theme.*
+import com.pikowalker.app.update.ApkInstaller
+import com.pikowalker.app.update.UpdateCheckResult
+import com.pikowalker.app.update.UpdateChecker
+import com.pikowalker.app.update.ApkDownloader
+import com.pikowalker.app.update.UpdateUiState
 import com.pikowalker.app.viewmodel.WalkViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(viewModel: WalkViewModel, onRequestHcPermission: () -> Unit) {
@@ -248,8 +254,9 @@ fun SettingsScreen(viewModel: WalkViewModel, onRequestHcPermission: () -> Unit) 
             Text(
                 "版本 ${BuildConfig.VERSION_NAME}",
                 fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1A1A1A),
-                modifier = Modifier.padding(vertical = 10.dp)
+                modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
             )
+            UpdateCheckContent()
         }
     }
 }
@@ -269,6 +276,107 @@ private fun checkNotificationPermission(context: Context): Boolean =
 private fun launchIntent(context: Context, intent: Intent) {
     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     context.startActivity(intent)
+}
+
+@Composable
+private fun UpdateCheckContent() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var uiState by remember { mutableStateOf<UpdateUiState>(UpdateUiState.Idle) }
+
+    fun startDownload(info: UpdateCheckResult.Available) {
+        scope.launch {
+            uiState = UpdateUiState.Downloading(info, 0f)
+            try {
+                val file = ApkDownloader.download(context, info.assetApiUrl, info.assetName) { progress ->
+                    uiState = UpdateUiState.Downloading(info, progress)
+                }
+                uiState = UpdateUiState.ReadyToInstall(file.absolutePath)
+            } catch (e: Exception) {
+                uiState = UpdateUiState.Error(e.message ?: "下載失敗")
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        when (val state = uiState) {
+            is UpdateUiState.Idle -> {
+                OutlinedButton(
+                    onClick = {
+                        uiState = UpdateUiState.Checking
+                        scope.launch {
+                            uiState = when (val result = UpdateChecker.checkForUpdate()) {
+                                is UpdateCheckResult.UpToDate -> UpdateUiState.UpToDate
+                                is UpdateCheckResult.Available -> UpdateUiState.Available(result)
+                                is UpdateCheckResult.Error -> UpdateUiState.Error(result.message)
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)
+                ) { Text("檢查更新") }
+            }
+            is UpdateUiState.Checking -> {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("檢查中...", fontSize = 14.sp, color = Color(0xFF757575))
+                }
+            }
+            is UpdateUiState.UpToDate -> {
+                Text("已是最新版本", fontSize = 14.sp, color = Color(0xFF2E7D32), modifier = Modifier.padding(vertical = 8.dp))
+            }
+            is UpdateUiState.Available -> {
+                Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                    Text("發現新版本 v${state.info.version}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEF6C00))
+                    if (state.info.notes.isNotBlank()) {
+                        Text(
+                            state.info.notes, fontSize = 12.sp, color = Color(0xFF757575),
+                            maxLines = 4, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                        )
+                    } else {
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    Button(
+                        onClick = { startDownload(state.info) },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)
+                    ) { Text("下載並安裝") }
+                }
+            }
+            is UpdateUiState.Downloading -> {
+                Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                    Text("下載中 ${(state.progress * 100).toInt()}%", fontSize = 14.sp, color = Color(0xFF757575))
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LinearProgressIndicator(
+                        progress = { state.progress },
+                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
+                    )
+                }
+            }
+            is UpdateUiState.ReadyToInstall -> {
+                Button(
+                    onClick = {
+                        if (ApkInstaller.canInstallUnknownApps(context)) {
+                            ApkInstaller.install(context, java.io.File(state.apkPath))
+                        } else {
+                            launchIntent(context, ApkInstaller.requestInstallPermissionIntent(context))
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)
+                ) { Text("安裝新版本") }
+            }
+            is UpdateUiState.Error -> {
+                Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                    Text(state.message, fontSize = 13.sp, color = Color(0xFFC62828))
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedButton(
+                        onClick = { uiState = UpdateUiState.Idle },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 36.dp)
+                    ) { Text("重試") }
+                }
+            }
+        }
+    }
 }
 
 @Composable

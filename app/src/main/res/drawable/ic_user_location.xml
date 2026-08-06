@@ -1,0 +1,24 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="40dp"
+    android:height="40dp"
+    android:viewportWidth="40"
+    android:viewportHeight="40">
+    <!-- Green circle background -->
+    <path
+        android:fillColor="#2D6A4F"
+        android:pathData="M20,2C10.06,2 2,10.06 2,20C2,29.94 10.06,38 20,38C29.94,38 38,29.94 38,20C38,10.06 29.94,2 20,2Z"/>
+    <!-- White border ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:pathData="M20,3C10.61,3 3,10.61 3,20C3,29.39 10.61,37 20,37C29.39,37 37,29.39 37,20C37,10.61 29.39,3 20,3Z"/>
+    <!-- Person: head -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M20,10C17.24,10 15,12.24 15,15C15,17.76 17.24,20 20,20C22.76,20 25,17.76 25,15C25,12.24 22.76,10 20,10Z"/>
+    <!-- Person: shoulders/body -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M20,22C14.48,22 10,24.24 10,27L10,29L30,29L30,27C30,24.24 25.52,22 20,22Z"/>
+</vector>

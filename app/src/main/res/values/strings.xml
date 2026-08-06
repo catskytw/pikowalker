@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_name">PikoWalker</string>
+    <string name="tab_walk">走路</string>
+    <string name="tab_route">路線</string>
+    <string name="tab_stats">統計</string>
+    <string name="start_simulation">開始模擬</string>
+    <string name="stop_simulation">停止模擬</string>
+    <string name="pause_simulation">暫停</string>
+    <string name="resume_simulation">繼續</string>
+    <string name="speed_slow">慢速</string>
+    <string name="speed_normal">正常</string>
+    <string name="speed_fast">快速</string>
+    <string name="steps">步數</string>
+    <string name="distance">距離</string>
+    <string name="time">時間</string>
+    <string name="loops">迴圈</string>
+    <string name="loop_mode">迴圈模式</string>
+    <string name="add_waypoint">點選地圖新增路徑點</string>
+    <string name="search_address">搜尋地址...</string>
+    <string name="notification_title">PikoWalker 執行中</string>
+    <string name="permission_location_rationale">需要位置權限才能模擬 GPS 走路</string>
+    <string name="permission_notification_rationale">需要通知權限才能在背景顯示執行狀態</string>
+</resources>

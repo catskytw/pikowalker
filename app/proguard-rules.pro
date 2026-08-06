@@ -1,0 +1,2 @@
+-keep class com.pikowalker.app.model.** { *; }
+-keepattributes *Annotation*

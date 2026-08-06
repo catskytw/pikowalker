@@ -8,7 +8,9 @@ cd "$(dirname "$0")/.."
 GH="/c/Program Files/GitHub CLI/gh.exe"
 REPO="catskytw/pikowalker"
 
-./gradlew assembleDebug
+# 用 clean 而非單純 assembleDebug —— 曾發生過增量編譯沒有正確重新編譯
+# 參照到 BuildConfig 的類別，導致版本號等欄位停留在舊值的問題。
+./gradlew clean assembleDebug
 
 BUILD_NUMBER=$(grep buildNumber app/version.properties | cut -d= -f2)
 VERSION="1.0.$BUILD_NUMBER"

@@ -155,14 +155,24 @@ class MainActivity : ComponentActivity() {
         // particular has been seen to intermittently 404 a valid short link, so retry once.
         val url = Regex("https?://\\S+").find(text)?.value ?: return
         lifecycleScope.launch {
+            var resolved: String? = null
             var coords: Pair<Double, Double>? = null
             repeat(2) { attempt ->
                 if (coords != null) return@repeat
                 if (attempt > 0) delay(500)
-                coords = resolveFinalUrl(url)?.let { parseCoordsFromText(it) }
+                resolved = resolveFinalUrl(url)
+                coords = resolved?.let { parseCoordsFromText(it) }
             }
-            coords?.let { (lat, lng) -> viewModel.setDeepLinkPoint(lat, lng) }
-                ?: viewModel.setError("無法解析分享的地圖連結，請改用複製貼上經緯度")
+            if (coords != null) {
+                val (lat, lng) = coords!!
+                viewModel.setDeepLinkPoint(lat, lng)
+            } else if (resolved?.contains("/maps/place/") == true) {
+                // A business/POI share references Google's internal place ID rather than
+                // embedding a coordinate — nothing here to parse without scraping their page.
+                viewModel.setError("這是商家地點連結，Google 沒有把座標放進連結裡，請改用複製貼上經緯度")
+            } else {
+                viewModel.setError("無法解析分享的地圖連結，請改用複製貼上經緯度")
+            }
         }
     }
 

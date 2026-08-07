@@ -156,16 +156,58 @@
       "type": "symbol",
       "source": "openmaptiles",
       "source-layer": "place",
-      "filter": ["in", "class", "town", "village"],
+      "filter": ["in", "class", "town", "village", "hamlet"],
       "minzoom": 9,
-      "maxzoom": 16,
       "layout": {
         "text-field": ["coalesce", ["get", "name:zh"], ["get", "name"]],
         "text-font": ["Noto Sans Regular"],
-        "text-size": ["interpolate", ["linear"], ["zoom"], 9, 10, 13, 13, 16, 15]
+        "text-size": ["interpolate", ["linear"], ["zoom"], 9, 10, 13, 13, 18, 16]
       },
       "paint": {
         "text-color": "#4A4A4A",
+        "text-halo-color": "#FFFFFF",
+        "text-halo-width": 1.2
+      }
+    },
+    {
+      "id": "place-neighbourhood",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "place",
+      "filter": ["in", "class", "suburb", "quarter", "neighbourhood", "isolated_dwelling"],
+      "minzoom": 12,
+      "layout": {
+        "text-field": ["coalesce", ["get", "name:zh"], ["get", "name"]],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 12, 10, 16, 12, 18, 14]
+      },
+      "paint": {
+        "text-color": "#6B6B6B",
+        "text-halo-color": "#FFFFFF",
+        "text-halo-width": 1.1
+      }
+    },
+    {
+      "id": "poi-landmark",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "poi",
+      "filter": ["in", "class",
+        "park", "hospital", "school", "college", "university", "museum",
+        "attraction", "monument", "stadium", "zoo", "aerodrome", "cemetery",
+        "golf", "viewpoint", "theme_park", "picnic_site", "camp_site",
+        "town_hall", "police", "fire_station", "library"
+      ],
+      "minzoom": 13,
+      "layout": {
+        "text-field": ["coalesce", ["get", "name:zh"], ["get", "name"]],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 13, 10, 16, 12, 18, 14],
+        "text-anchor": "top",
+        "text-offset": [0, 0.6]
+      },
+      "paint": {
+        "text-color": "#5B4636",
         "text-halo-color": "#FFFFFF",
         "text-halo-width": 1.2
       }

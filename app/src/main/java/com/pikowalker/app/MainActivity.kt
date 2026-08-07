@@ -152,12 +152,13 @@ class MainActivity : ComponentActivity() {
 
         // Shortened links (goo.gl/maps, maps.app.goo.gl) don't carry visible coordinates —
         // resolve the redirect chain first, then parse the final URL the same way. goo.gl in
-        // particular has been seen to intermittently 404 a valid short link, so retry once.
+        // particular (it's a deprecated, increasingly flaky Google service) has been seen to
+        // intermittently fail a link that resolves fine moments later, so retry a few times.
         val url = Regex("https?://\\S+").find(text)?.value ?: return
         lifecycleScope.launch {
             var resolved: String? = null
             var coords: Pair<Double, Double>? = null
-            repeat(2) { attempt ->
+            repeat(3) { attempt ->
                 if (coords != null) return@repeat
                 if (attempt > 0) delay(500)
                 resolved = resolveFinalUrl(url)
@@ -198,7 +199,8 @@ class MainActivity : ComponentActivity() {
                     }
                 } else {
                     conn.inputStream.close()
-                    return@runCatching current
+                    if (code == 200) return@runCatching current
+                    return@runCatching null
                 }
             }
             current

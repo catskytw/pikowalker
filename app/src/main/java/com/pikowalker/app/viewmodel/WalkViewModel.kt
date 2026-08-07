@@ -44,6 +44,20 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
     private val _lastSavedName = MutableStateFlow<String?>(null)
     val lastSavedName: StateFlow<String?> = _lastSavedName.asStateFlow()
 
+    /** A coordinate handed to us by another app (e.g. "用應用程式開啟" on a geo: link for a
+     *  Pikmin Bloom flower/mushroom). Shown as a search-style pin for the user to confirm via
+     *  設為模擬點 — arriving here never moves fake GPS on its own. */
+    private val _pendingDeepLinkPoint = MutableStateFlow<GeoPoint?>(null)
+    val pendingDeepLinkPoint: StateFlow<GeoPoint?> = _pendingDeepLinkPoint.asStateFlow()
+
+    fun setDeepLinkPoint(lat: Double, lng: Double) {
+        _pendingDeepLinkPoint.value = GeoPoint(lat, lng)
+    }
+
+    fun consumeDeepLinkPoint() {
+        _pendingDeepLinkPoint.value = null
+    }
+
     private val _todaySteps = MutableStateFlow(0L)
     val todaySteps: StateFlow<Long> = _todaySteps.asStateFlow()
 

@@ -92,6 +92,7 @@ fun MapScreen(viewModel: WalkViewModel) {
     val state by viewModel.walkState.collectAsState()
     val savedRoutes by viewModel.savedRoutes.collectAsState()
     val lastSavedName by viewModel.lastSavedName.collectAsState()
+    val pendingDeepLinkPoint by viewModel.pendingDeepLinkPoint.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val geocodingRepo = remember { GeocodingRepository(context) }
@@ -271,6 +272,18 @@ fun MapScreen(viewModel: WalkViewModel) {
             """{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[${it.lng},${it.lat}]},"properties":{}}]}"""
         } ?: EMPTY_FEATURE_COLLECTION
         style.getSourceAs<GeoJsonSource>(SEARCH_PIN_SOURCE)?.setGeoJson(json)
+    }
+
+    // A coordinate handed to us by another app (e.g. opening a Pikmin Bloom flower/mushroom's
+    // geo: link with PikoWalker). Treated exactly like a search result — just a pin to confirm
+    // via 設為模擬點, never moves fake GPS on its own.
+    LaunchedEffect(pendingDeepLinkPoint, styleRef.value) {
+        val point = pendingDeepLinkPoint ?: return@LaunchedEffect
+        if (styleRef.value == null) return@LaunchedEffect
+        mapRef.value?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(point.lat, point.lng), 16.0))
+        searchResult = point
+        searchCandidates = emptyList()
+        viewModel.consumeDeepLinkPoint()
     }
 
     // Update user-location icon + animate camera while statically holding
@@ -521,7 +534,7 @@ private fun SearchCandidatesList(
                 val label = address.getAddressLine(0)
                     ?: listOfNotNull(address.featureName, address.locality, address.adminArea)
                         .joinToString(", ")
-                        .ifBlank { "%.4f, %.4f".format(address.latitude, address.longitude) }
+                        .ifBlank { "%.6f, %.6f".format(address.latitude, address.longitude) }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -566,7 +579,7 @@ private fun SearchResultBar(
                 Icon(Icons.Default.LocationOn, null, Modifier.size(15.dp), tint = Color(0xFF1E88E5))
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    "%.4f, %.4f".format(result.lat, result.lng),
+                    "%.6f, %.6f".format(result.lat, result.lng),
                     fontSize = 11.sp, color = Color(0xFF555555),
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
@@ -1150,7 +1163,7 @@ private fun WaypointRow(index: Int, pt: GeoPoint, canDelete: Boolean, onDelete: 
         }
         Spacer(Modifier.width(8.dp))
         Text(
-            "%.4f, %.4f".format(pt.lat, pt.lng),
+            "%.6f, %.6f".format(pt.lat, pt.lng),
             fontSize = 11.sp, color = Color(0xFF333333),
             modifier = Modifier.weight(1f)
         )

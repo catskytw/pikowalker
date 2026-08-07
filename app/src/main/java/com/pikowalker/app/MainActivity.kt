@@ -1,7 +1,9 @@
 package com.pikowalker.app
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -22,7 +24,11 @@ import com.pikowalker.app.health.HealthConnectHelper
 import com.pikowalker.app.ui.navigation.PikoWalkerNavGraph
 import com.pikowalker.app.ui.theme.PikoWalkerTheme
 import com.pikowalker.app.viewmodel.WalkViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : ComponentActivity() {
 
@@ -59,6 +65,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         checkPermissions()
         checkHealthConnect()
+        handleIncomingIntent(intent)
         setContent {
             PikoWalkerTheme {
                 if (permissionsGranted) {
@@ -76,6 +83,108 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         checkHealthConnect()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    /** Two ways another app can hand us a location:
+     *  - ACTION_VIEW on a geo: link ("用應用程式開啟" on a spot that offers a real chooser).
+     *  - ACTION_SEND of text (Google Maps' own "分享" button on a pin) — used e.g. when the
+     *    other app hard-codes Maps as the opener (like Pikmin Bloom does) and Maps itself is
+     *    the only way to get the coordinate back out. */
+    private fun handleIncomingIntent(intent: Intent?) {
+        intent ?: return
+        when (intent.action) {
+            Intent.ACTION_VIEW -> intent.data?.let { uri ->
+                parseGeoUri(uri)?.let { (lat, lng) -> viewModel.setDeepLinkPoint(lat, lng) }
+            }
+            Intent.ACTION_SEND -> {
+                if (intent.type == "text/plain") {
+                    handleSharedText(intent.getStringExtra(Intent.EXTRA_TEXT))
+                }
+            }
+        }
+    }
+
+    private fun parseGeoUri(uri: Uri): Pair<Double, Double>? {
+        if (uri.scheme != "geo") return null
+        val raw = uri.schemeSpecificPart ?: return null
+        val coordRegex = Regex("(-?\\d{1,3}\\.\\d+)\\s*,\\s*(-?\\d{1,3}\\.\\d+)")
+
+        // "geo:0,0?q=24.123,121.456(label)" style — the q param carries the real coordinate.
+        val qValue = Regex("[?&]q=([^&]+)").find(raw)?.groupValues?.get(1)
+            ?.let { runCatching { Uri.decode(it) }.getOrNull() }
+        val match = qValue?.let { coordRegex.find(it) } ?: coordRegex.find(raw.substringBefore("?"))
+        val lat = match?.groupValues?.get(1)?.toDoubleOrNull() ?: return null
+        val lng = match.groupValues[2].toDoubleOrNull() ?: return null
+        if (lat == 0.0 && lng == 0.0) return null
+        return lat to lng
+    }
+
+    /** Coordinate patterns seen in Google Maps share text/links, checked in order of
+     *  reliability: the place-page's own !3d/!4d pair (exact pin), then the viewport "@lat,lng"
+     *  center, then the older q=/ll= query-param forms. */
+    private val mapsCoordPatterns = listOf(
+        Regex("!3d(-?\\d{1,3}\\.\\d+)!4d(-?\\d{1,3}\\.\\d+)"),
+        Regex("@(-?\\d{1,3}\\.\\d+),(-?\\d{1,3}\\.\\d+)"),
+        Regex("[?&]q=(-?\\d{1,3}\\.\\d+),(-?\\d{1,3}\\.\\d+)"),
+        Regex("[?&]ll=(-?\\d{1,3}\\.\\d+),(-?\\d{1,3}\\.\\d+)"),
+    )
+
+    private fun parseCoordsFromText(text: String): Pair<Double, Double>? {
+        for (pattern in mapsCoordPatterns) {
+            val m = pattern.find(text) ?: continue
+            val lat = m.groupValues[1].toDoubleOrNull() ?: continue
+            val lng = m.groupValues[2].toDoubleOrNull() ?: continue
+            return lat to lng
+        }
+        return null
+    }
+
+    private fun handleSharedText(text: String?) {
+        if (text.isNullOrBlank()) return
+        parseCoordsFromText(text)?.let { (lat, lng) -> viewModel.setDeepLinkPoint(lat, lng); return }
+
+        // Shortened links (goo.gl/maps, maps.app.goo.gl) don't carry visible coordinates —
+        // resolve the redirect chain first, then parse the final URL the same way.
+        val url = Regex("https?://\\S+").find(text)?.value ?: return
+        lifecycleScope.launch {
+            val resolved = resolveFinalUrl(url) ?: return@launch
+            parseCoordsFromText(resolved)?.let { (lat, lng) -> viewModel.setDeepLinkPoint(lat, lng) }
+        }
+    }
+
+    private suspend fun resolveFinalUrl(url: String): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            var current = url
+            repeat(5) {
+                val conn = (URL(current).openConnection() as HttpURLConnection).apply {
+                    instanceFollowRedirects = false
+                    requestMethod = "GET"
+                    connectTimeout = 8_000
+                    readTimeout = 8_000
+                    setRequestProperty("User-Agent", "Mozilla/5.0")
+                }
+                val code = conn.responseCode
+                if (code in 300..399) {
+                    val location = conn.getHeaderField("Location")
+                    conn.disconnect()
+                    if (location != null) {
+                        current = if (location.startsWith("http")) location
+                        else URL(URL(current), location).toString()
+                        return@repeat
+                    }
+                } else {
+                    conn.inputStream.close()
+                    return@runCatching current
+                }
+            }
+            current
+        }.getOrNull()
     }
 
     private fun checkPermissions() {

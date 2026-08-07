@@ -25,6 +25,7 @@ import com.pikowalker.app.ui.navigation.PikoWalkerNavGraph
 import com.pikowalker.app.ui.theme.PikoWalkerTheme
 import com.pikowalker.app.viewmodel.WalkViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
@@ -150,11 +151,18 @@ class MainActivity : ComponentActivity() {
         parseCoordsFromText(text)?.let { (lat, lng) -> viewModel.setDeepLinkPoint(lat, lng); return }
 
         // Shortened links (goo.gl/maps, maps.app.goo.gl) don't carry visible coordinates —
-        // resolve the redirect chain first, then parse the final URL the same way.
+        // resolve the redirect chain first, then parse the final URL the same way. goo.gl in
+        // particular has been seen to intermittently 404 a valid short link, so retry once.
         val url = Regex("https?://\\S+").find(text)?.value ?: return
         lifecycleScope.launch {
-            val resolved = resolveFinalUrl(url) ?: return@launch
-            parseCoordsFromText(resolved)?.let { (lat, lng) -> viewModel.setDeepLinkPoint(lat, lng) }
+            var coords: Pair<Double, Double>? = null
+            repeat(2) { attempt ->
+                if (coords != null) return@repeat
+                if (attempt > 0) delay(500)
+                coords = resolveFinalUrl(url)?.let { parseCoordsFromText(it) }
+            }
+            coords?.let { (lat, lng) -> viewModel.setDeepLinkPoint(lat, lng) }
+                ?: viewModel.setError("無法解析分享的地圖連結，請改用複製貼上經緯度")
         }
     }
 

@@ -58,6 +58,8 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
         _pendingDeepLinkPoint.value = null
     }
 
+    fun setError(message: String?) = repo.setError(message)
+
     private val _todaySteps = MutableStateFlow(0L)
     val todaySteps: StateFlow<Long> = _todaySteps.asStateFlow()
 

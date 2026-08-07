@@ -35,6 +35,20 @@ fun PikoWalkerNavGraph(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
+    // Only the active tab is composed, so a coordinate handed to us by another app (geo: link,
+    // Google Maps 分享) would silently sit in the ViewModel forever if we were on Stats/Settings
+    // when it arrived — force a jump to 地圖 so MapScreen actually mounts and can show it.
+    val pendingDeepLink by viewModel.pendingDeepLinkPoint.collectAsState()
+    LaunchedEffect(pendingDeepLink) {
+        if (pendingDeepLink != null && currentDestination?.route != Screen.Map.route) {
+            navController.navigate(Screen.Map.route) {
+                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+    }
+
     Scaffold(
         bottomBar = {
             NavigationBar {

@@ -17,6 +17,7 @@ import com.pikowalker.app.PikStepApp
 import com.pikowalker.app.debug.DebugLogger
 import com.pikowalker.app.health.HealthConnectHelper
 import com.pikowalker.app.location.LocationSimulator
+import com.pikowalker.app.settings.AppSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -209,7 +210,7 @@ class MockLocationService : Service() {
                 val distanceMeters = totalSteps * 0.75
                 elapsedSeconds++
                 repo.updateStats(totalSteps, distanceMeters, elapsedSeconds)
-                repo.updateCurrentPosition(locationSimulator.currentLat, locationSimulator.currentLng)
+                repo.updateCurrentPosition(locationSimulator.currentLat, locationSimulator.currentLng, locationSimulator.currentBearing)
 
                 val now = System.currentTimeMillis()
                 if (now - lastHcInsertMs >= 30_000L) {
@@ -217,13 +218,13 @@ class MockLocationService : Service() {
                     val start = lastHcInsertMs
                     stepsAtLastInsert = totalSteps
                     lastHcInsertMs = now
-                    if (stepsInPeriod > 0) {
+                    if (AppSettings.writeStepsEnabled && stepsInPeriod > 0) {
                         serviceScope.launch(Dispatchers.IO) {
                             DebugLogger.log("HealthConnect", "準備寫入 steps=$stepsInPeriod")
                             healthConnectHelper.insertSteps(stepsInPeriod, start, now)
                         }
                     } else {
-                        DebugLogger.log("HealthConnect", "略過寫入，這段時間步數=$stepsInPeriod")
+                        DebugLogger.log("HealthConnect", "略過寫入，這段時間步數=$stepsInPeriod writeStepsEnabled=${AppSettings.writeStepsEnabled}")
                     }
                 }
 

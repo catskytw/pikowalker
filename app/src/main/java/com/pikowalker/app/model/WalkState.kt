@@ -20,6 +20,7 @@ data class WalkState(
     val isRoutePaused: Boolean = false,    // true when a route walk was stopped mid-way and can be resumed
     val currentLat: Double = 0.0,
     val currentLng: Double = 0.0,
+    val currentBearing: Float = 0f,        // compass heading of travel, degrees; meaningless while stationary
 ) {
     val distanceKm: String get() = "%.1f".format(distanceMeters / 1000.0)
     val elapsedTime: String get() {

@@ -42,6 +42,7 @@ import com.pikowalker.app.BuildConfig
 import com.pikowalker.app.model.SavedRoute
 import com.pikowalker.app.model.ScheduleConfig
 import com.pikowalker.app.schedule.ScheduleManager
+import com.pikowalker.app.settings.AppSettings
 import com.pikowalker.app.ui.theme.*
 import com.pikowalker.app.update.ApkInstaller
 import com.pikowalker.app.update.UpdateCheckResult
@@ -200,6 +201,8 @@ fun SettingsScreen(viewModel: WalkViewModel, onRequestHcPermission: () -> Unit) 
                 actionLabel = if (state.hasHealthPermission) "重新授權" else "授予權限",
                 onAction = if (state.healthConnectAvailable) onRequestHcPermission else null
             )
+            RowDivider()
+            WriteStepsToggleRow(hcPermitted = state.hasHealthPermission)
         }
 
         // ── 手動校正今日步數 ──────────────────────────────────────────────────
@@ -286,6 +289,39 @@ private fun checkNotificationPermission(context: Context): Boolean =
 private fun launchIntent(context: Context, intent: Intent) {
     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     context.startActivity(intent)
+}
+
+@Composable
+private fun WriteStepsToggleRow(hcPermitted: Boolean) {
+    val context = LocalContext.current
+    var enabled by remember { mutableStateOf(AppSettings.writeStepsEnabled) }
+    val grayed = Color(0xFFBDBDBD)
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "寫入步數", fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                color = if (hcPermitted) Color(0xFF1A1A1A) else grayed
+            )
+            Text(
+                if (hcPermitted) "關閉後只移動GPS位置，不會把步數寫入 Health Connect"
+                else "需先授予上方「步數讀寫權限」才能使用",
+                fontSize = 12.sp, color = if (hcPermitted) Color(0xFF757575) else grayed, lineHeight = 16.sp
+            )
+        }
+        Switch(
+            checked = enabled && hcPermitted,
+            onCheckedChange = {
+                enabled = it
+                AppSettings.setWriteStepsEnabled(context, it)
+            },
+            enabled = hcPermitted,
+            colors = SwitchDefaults.colors(checkedTrackColor = ForestGreen)
+        )
+    }
 }
 
 @Composable

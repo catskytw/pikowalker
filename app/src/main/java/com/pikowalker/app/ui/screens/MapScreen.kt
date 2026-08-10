@@ -79,8 +79,10 @@ private const val WAYPOINTS_LAYER    = "pikowalker-waypoints-layer"
 private const val ROUTE_LAYER        = "pikowalker-route-layer"
 private const val USER_LOC_LAYER     = "pikowalker-userloc-layer"
 private const val SEARCH_PIN_LAYER   = "pikowalker-searchpin-layer"
+private const val USER_BEARING_LAYER = "pikowalker-bearing-layer"
 private const val USER_LOC_ICON      = "pikowalker-user-icon"
 private const val SEARCH_PIN_ICON    = "pikowalker-searchpin-icon"
+private const val USER_BEARING_ICON  = "pikowalker-bearing-icon"
 private const val STYLE_URI          = "asset://pikmin_style.json"
 private const val MAX_PINS           = 20
 
@@ -182,6 +184,25 @@ fun MapScreen(viewModel: WalkViewModel) {
                     }
                 )
 
+                // Direction arrow — anchored at its own bottom edge to the same point as the
+                // avatar, with blank space below the arrowhead sized to the avatar's radius, so
+                // rotating it swings the visible arrow around just outside the avatar's ring
+                // instead of getting buried behind it.
+                style.addImage(USER_BEARING_ICON, bearingIndicatorBitmap(context))
+                style.addLayer(
+                    SymbolLayer(USER_BEARING_LAYER, USER_LOC_SOURCE).apply {
+                        setProperties(
+                            PropertyFactory.iconImage(USER_BEARING_ICON),
+                            PropertyFactory.iconAnchor("bottom"),
+                            PropertyFactory.iconAllowOverlap(true),
+                            PropertyFactory.iconIgnorePlacement(true),
+                            PropertyFactory.iconRotationAlignment("map"),
+                            PropertyFactory.iconRotate(Expression.get("bearing")),
+                            PropertyFactory.iconSize(1f)
+                        )
+                    }
+                )
+
                 style.addImage(USER_LOC_ICON, userLocationBitmap(context))
                 style.addLayer(
                     SymbolLayer(USER_LOC_LAYER, USER_LOC_SOURCE).apply {
@@ -209,7 +230,7 @@ fun MapScreen(viewModel: WalkViewModel) {
 
                 getLastKnownLocation(context)?.let { loc ->
                     if (state.currentLat == 0.0 && state.currentLng == 0.0) {
-                        updateUserLocSource(style, loc.latitude, loc.longitude)
+                        updateUserLocSource(style, loc.latitude, loc.longitude, loc.bearing)
                         map.animateCamera(
                             CameraUpdateFactory.newLatLngZoom(LatLng(loc.latitude, loc.longitude), 16.0)
                         )
@@ -291,7 +312,7 @@ fun MapScreen(viewModel: WalkViewModel) {
         val style = styleRef.value ?: return@LaunchedEffect
         val map   = mapRef.value   ?: return@LaunchedEffect
         if (state.currentLat != 0.0 || state.currentLng != 0.0) {
-            updateUserLocSource(style, state.currentLat, state.currentLng)
+            updateUserLocSource(style, state.currentLat, state.currentLng, state.currentBearing)
             if (state.isStaticAtWaypoint) {
                 map.animateCamera(CameraUpdateFactory.newLatLng(LatLng(state.currentLat, state.currentLng)))
             }
@@ -307,7 +328,7 @@ fun MapScreen(viewModel: WalkViewModel) {
         if (!state.isSimulating) {
             while (true) {
                 getLastKnownLocation(context)?.let { loc ->
-                    updateUserLocSource(style, loc.latitude, loc.longitude)
+                    updateUserLocSource(style, loc.latitude, loc.longitude, loc.bearing)
                 }
                 kotlinx.coroutines.delay(3_000)
             }
@@ -1292,9 +1313,51 @@ private fun getLastKnownLocation(context: android.content.Context): android.loca
     } catch (_: Exception) { null }
 }
 
-private fun updateUserLocSource(style: Style, lat: Double, lng: Double) {
-    val json = """{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[$lng,$lat]},"properties":{}}]}"""
+private fun updateUserLocSource(style: Style, lat: Double, lng: Double, bearing: Float = 0f) {
+    val json = """{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[$lng,$lat]},"properties":{"bearing":$bearing}}]}"""
     style.getSourceAs<GeoJsonSource>(USER_LOC_SOURCE)?.setGeoJson(json)
+}
+
+/** Direction arrow: bottom-anchored (see the layer setup above) so the blank strip at the
+ *  bottom — sized to the avatar's own radius — keeps the arrowhead orbiting just outside the
+ *  52dp avatar ring instead of sitting underneath it. */
+private fun bearingIndicatorBitmap(context: android.content.Context): Bitmap {
+    val dp          = context.resources.displayMetrics.density
+    val avatarR     = 26 * dp   // half of the 52dp avatar badge
+    val arrowLength = 20 * dp
+    val arrowWidth  = 22 * dp
+    val gap         = 0.5f * dp // small breathing room between ring edge and arrowhead
+
+    val w = arrowWidth.toInt()
+    val h = (avatarR + gap + arrowLength).toInt()
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val cv  = Canvas(bmp)
+    val p   = Paint(Paint.ANTI_ALIAS_FLAG)
+    val cx  = w / 2f
+
+    // Classic "navigation arrow" kite shape — a slim dart with a concave notch at the back,
+    // drawn entirely within the top [0, arrowLength] strip, pointing toward y=0.
+    val tip    = 0f
+    val baseY  = arrowLength
+    val notchY = baseY - arrowLength * 0.32f
+    val halfW  = cx * 0.85f
+    val path = Path()
+    path.moveTo(cx, tip)
+    path.lineTo(cx + halfW, baseY)
+    path.lineTo(cx, notchY)
+    path.lineTo(cx - halfW, baseY)
+    path.close()
+
+    p.style = Paint.Style.FILL
+    p.color = android.graphics.Color.WHITE
+    cv.drawPath(path, p)
+
+    p.style = Paint.Style.STROKE
+    p.strokeWidth = dp * 1.2f
+    p.color = android.graphics.Color.parseColor("#1B7C55")
+    cv.drawPath(path, p)
+
+    return bmp
 }
 
 private fun userLocationBitmap(context: android.content.Context): Bitmap {

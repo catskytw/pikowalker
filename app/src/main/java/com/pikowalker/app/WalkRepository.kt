@@ -27,8 +27,8 @@ class WalkRepository {
     fun resetStats() =
         _state.update { it.copy(steps = 0L, distanceMeters = 0.0, elapsedSeconds = 0) }
 
-    fun updateCurrentPosition(lat: Double, lng: Double) =
-        _state.update { it.copy(currentLat = lat, currentLng = lng) }
+    fun updateCurrentPosition(lat: Double, lng: Double, bearing: Float? = null) =
+        _state.update { it.copy(currentLat = lat, currentLng = lng, currentBearing = bearing ?: it.currentBearing) }
 
     fun addWaypoint(point: GeoPoint) =
         _state.update { it.copy(waypoints = it.waypoints + point, isRoutePaused = false) }

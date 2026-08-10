@@ -8,7 +8,9 @@ import android.os.Build
 import android.os.SystemClock
 import com.pikowalker.app.debug.DebugLogger
 import com.pikowalker.app.model.WaypointLoopMode
+import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 
@@ -27,6 +29,7 @@ class LocationSimulator(private val context: Context) {
 
     var currentLat: Double = wpLat; private set
     var currentLng: Double = wpLng; private set
+    var currentBearing: Float = 0f; private set
 
     private var gpsProviderAdded = false
     private var networkProviderAdded = false
@@ -183,6 +186,8 @@ class LocationSimulator(private val context: Context) {
             return false
         }
 
+        val oldLat = wpLat
+        val oldLng = wpLng
         val speedMs = speedKmh / 3.6
         val target = wpList[wpIndex]
         val dist = distMeters(wpLat, wpLng, target.first, target.second)
@@ -230,14 +235,27 @@ class LocationSimulator(private val context: Context) {
             wpLng += metersToLng(dLngM * scale, wpLat)
         }
 
+        val headingTarget = wpList[wpIndex]
+        currentBearing = bearingBetween(oldLat, oldLng, headingTarget.first, headingTarget.second)
         currentLat = wpLat; currentLng = wpLng
-        pushLocation(jitterLat(wpLat), jitterLng(wpLng, wpLat), tickSpeedMs.toFloat())
+        pushLocation(jitterLat(wpLat), jitterLng(wpLng, wpLat), tickSpeedMs.toFloat(), currentBearing)
         return justReachedEnd
     }
 
     private fun metersToLat(m: Double) = m / 111_320.0
     private fun metersToLng(m: Double, refLat: Double) =
         m / (111_320.0 * cos(Math.toRadians(refLat)))
+
+    /** Initial compass bearing (0–360°, 0 = north) from point 1 to point 2. */
+    private fun bearingBetween(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Float {
+        val phi1 = Math.toRadians(lat1)
+        val phi2 = Math.toRadians(lat2)
+        val deltaLambda = Math.toRadians(lng2 - lng1)
+        val y = sin(deltaLambda) * cos(phi2)
+        val x = cos(phi1) * sin(phi2) - sin(phi1) * cos(phi2) * cos(deltaLambda)
+        val theta = atan2(y, x)
+        return ((Math.toDegrees(theta) + 360.0) % 360.0).toFloat()
+    }
 
     /** Small random offset standing in for real GPS receiver noise (≤ ~1.2m), applied only to
      *  what's reported to the OS — [currentLat]/[currentLng] and the path-following math stay
@@ -263,7 +281,7 @@ class LocationSimulator(private val context: Context) {
         else -> false
     }
 
-    private fun pushLocation(lat: Double, lng: Double, speed: Float) {
+    private fun pushLocation(lat: Double, lng: Double, speed: Float, bearing: Float? = null) {
         val time = System.currentTimeMillis()
         val elapsed = SystemClock.elapsedRealtimeNanos()
         val providers = buildList {
@@ -277,8 +295,10 @@ class LocationSimulator(private val context: Context) {
                 accuracy = 3.0f; this.speed = speed
                 this.time = time
                 elapsedRealtimeNanos = elapsed
+                if (bearing != null) this.bearing = bearing
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     verticalAccuracyMeters = 5.0f; speedAccuracyMetersPerSecond = 0.5f
+                    if (bearing != null) bearingAccuracyDegrees = 10f
                 }
             }
             var ok = runCatching { locationManager.setTestProviderLocation(provider, loc) }

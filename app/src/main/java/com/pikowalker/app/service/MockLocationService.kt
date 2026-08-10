@@ -79,12 +79,17 @@ class MockLocationService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        android.util.Log.w("PikoLocDiag", "MockLocationService onCreate pid=${android.os.Process.myPid()}")
         locationSimulator = LocationSimulator(this)
+        locationSimulator.onPersistentFailure = {
+            repo.setError("模擬定位似乎被系統關閉，已嘗試自動修復但未成功\n請完全停止再重新開始偽造GPS")
+        }
         healthConnectHelper = HealthConnectHelper(this)
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        android.util.Log.w("PikoLocDiag", "onStartCommand action=${intent?.action}")
         when (intent?.action) {
             ACTION_HOLD -> {
                 val lat = intent.getDoubleExtra(EXTRA_LAT, 0.0)
@@ -160,12 +165,28 @@ class MockLocationService : Service() {
         }
     }
 
+    private fun logDiagnosticSnapshot(tag: String) {
+        val state = repo.currentState
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        val isIgnoringBatteryOpt = pm.isIgnoringBatteryOptimizations(packageName)
+        val isDeviceIdle = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) pm.isDeviceIdleMode else false
+        android.util.Log.w(
+            "PikoLocDiag",
+            "$tag isSimulating=${state.isSimulating} isWalkingRoute=${state.isWalkingRoute} " +
+                "batteryOptExempt=$isIgnoringBatteryOpt deviceIdle=$isDeviceIdle " +
+                "wakeLockHeld=${wakeLock?.isHeld} lat=${state.currentLat} lng=${state.currentLng}"
+        )
+    }
+
     private fun startHoldLoop() {
         loopJob?.cancel()
+        var tick = 0
         loopJob = serviceScope.launch {
             while (true) {
                 delay(1000)
                 locationSimulator.keepAlive()
+                tick++
+                if (tick % 30 == 0) logDiagnosticSnapshot("hold")
             }
         }
     }
@@ -218,6 +239,8 @@ class MockLocationService : Service() {
                     settleIntoHold("📍 已到達終點，靜止定位中")
                     return@launch
                 }
+
+                if (elapsedSeconds % 30 == 0) logDiagnosticSnapshot("walk")
             }
         }
     }
@@ -248,6 +271,7 @@ class MockLocationService : Service() {
     }
 
     override fun onDestroy() {
+        android.util.Log.w("PikoLocDiag", "MockLocationService onDestroy pid=${android.os.Process.myPid()}")
         super.onDestroy()
         loopJob?.cancel()
         locationSimulator.stop()

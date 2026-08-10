@@ -29,6 +29,14 @@ class LocationSimulator(private val context: Context) {
 
     private var gpsProviderAdded = false
     private var networkProviderAdded = false
+    private var fusedProviderAdded = false
+
+    // Consecutive location-push failures since the last successful push, per provider — used to
+    // decide when to stop silently self-healing and actually surface an error to the user.
+    private var gpsFailureStreak = 0
+    private var networkFailureStreak = 0
+    private var fusedFailureStreak = 0
+    var onPersistentFailure: (() -> Unit)? = null
 
     private val rng = Random(System.nanoTime())
 
@@ -64,43 +72,79 @@ class LocationSimulator(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun start(): Boolean {
-        try {
-            if (!gpsProviderAdded) {
-                locationManager.addTestProvider(
-                    LocationManager.GPS_PROVIDER,
-                    false, false, false, false, false,
-                    true, true,
-                    android.location.Criteria.POWER_LOW,
-                    android.location.Criteria.ACCURACY_FINE
-                )
-                gpsProviderAdded = true
-            }
-            locationManager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, true)
-        } catch (_: Exception) {
-            return false
-        }
-
-        // Best-effort: also mock NETWORK_PROVIDER so fused location clients (used by most
-        // step-tracking apps) never fall back to a real network fix and drift away from the
-        // simulated point. Failure here doesn't block simulation — GPS alone still works for
-        // apps that read GPS_PROVIDER directly.
-        try {
-            if (!networkProviderAdded) {
-                locationManager.addTestProvider(
-                    LocationManager.NETWORK_PROVIDER,
-                    false, false, false, false, false,
-                    true, true,
-                    android.location.Criteria.POWER_LOW,
-                    android.location.Criteria.ACCURACY_FINE
-                )
-                networkProviderAdded = true
-            }
-            locationManager.setTestProviderEnabled(LocationManager.NETWORK_PROVIDER, true)
-        } catch (_: Exception) {
-            networkProviderAdded = false
-        }
-
+        val gpsOk = reRegisterGpsProvider()
+        if (!gpsOk) return false
+        // Best-effort: also mock NETWORK_PROVIDER (and, on API 31+, the platform FUSED_PROVIDER)
+        // so fused-location clients — which is what most step/game apps actually read, Pikmin
+        // Bloom included — never blend in a real fix and drift away from the simulated point.
+        // Failure here doesn't block simulation — GPS alone still works for apps that read
+        // GPS_PROVIDER directly.
+        reRegisterNetworkProvider()
+        reRegisterFusedProvider()
         return true
+    }
+
+    /** Fully removes then re-adds the GPS test provider, mirroring exactly what a manual full
+     *  stop-then-restart does. The OS (especially battery-aggressive OEM skins) can silently
+     *  disable a mock provider mid-session without the app being told — [pushLocation] calls
+     *  this to self-heal instead of requiring the user to notice and manually restart. */
+    private fun reRegisterGpsProvider(): Boolean = try {
+        try { locationManager.removeTestProvider(LocationManager.GPS_PROVIDER) } catch (_: Exception) {}
+        locationManager.addTestProvider(
+            LocationManager.GPS_PROVIDER,
+            false, false, false, false, false,
+            true, true,
+            android.location.Criteria.POWER_LOW,
+            android.location.Criteria.ACCURACY_FINE
+        )
+        locationManager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, true)
+        gpsProviderAdded = true
+        true
+    } catch (_: Exception) {
+        gpsProviderAdded = false
+        false
+    }
+
+    private fun reRegisterNetworkProvider(): Boolean = try {
+        try { locationManager.removeTestProvider(LocationManager.NETWORK_PROVIDER) } catch (_: Exception) {}
+        locationManager.addTestProvider(
+            LocationManager.NETWORK_PROVIDER,
+            false, false, false, false, false,
+            true, true,
+            android.location.Criteria.POWER_LOW,
+            android.location.Criteria.ACCURACY_FINE
+        )
+        locationManager.setTestProviderEnabled(LocationManager.NETWORK_PROVIDER, true)
+        networkProviderAdded = true
+        true
+    } catch (_: Exception) {
+        networkProviderAdded = false
+        false
+    }
+
+    /** FUSED_PROVIDER is AOSP's own platform fusion provider (API 31+) — distinct from Google
+     *  Play Services' proprietary FusedLocationProviderClient, which most third-party apps
+     *  (Pikmin Bloom included) actually use and which isn't reachable through this API at all.
+     *  Mocking it here only helps the subset of apps that query the platform provider directly,
+     *  but costs nothing to also cover. */
+    private fun reRegisterFusedProvider(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
+        return try {
+            try { locationManager.removeTestProvider(LocationManager.FUSED_PROVIDER) } catch (_: Exception) {}
+            locationManager.addTestProvider(
+                LocationManager.FUSED_PROVIDER,
+                false, false, false, false, false,
+                true, true,
+                android.location.Criteria.POWER_LOW,
+                android.location.Criteria.ACCURACY_FINE
+            )
+            locationManager.setTestProviderEnabled(LocationManager.FUSED_PROVIDER, true)
+            fusedProviderAdded = true
+            true
+        } catch (_: Exception) {
+            fusedProviderAdded = false
+            false
+        }
     }
 
     fun stop() {
@@ -117,6 +161,13 @@ class LocationSimulator(private val context: Context) {
                 locationManager.removeTestProvider(LocationManager.NETWORK_PROVIDER)
             } catch (_: Exception) {}
             networkProviderAdded = false
+        }
+        if (fusedProviderAdded) {
+            try {
+                locationManager.setTestProviderEnabled(LocationManager.FUSED_PROVIDER, false)
+                locationManager.removeTestProvider(LocationManager.FUSED_PROVIDER)
+            } catch (_: Exception) {}
+            fusedProviderAdded = false
         }
         wpIndex = 0; wpForward = true; reachedEnd = false
     }
@@ -199,12 +250,25 @@ class LocationSimulator(private val context: Context) {
         return sqrt(dLat * dLat + dLng * dLng)
     }
 
+    // Above this many consecutive failed pushes for a provider (even after re-registering each
+    // time), something deeper than a transient OS drop is wrong — surface it instead of
+    // silently spinning forever while the app's own UI still looks like it's working fine.
+    private val persistentFailureThreshold = 15
+
+    private fun reRegisterProvider(provider: String): Boolean = when (provider) {
+        LocationManager.GPS_PROVIDER -> reRegisterGpsProvider()
+        LocationManager.NETWORK_PROVIDER -> reRegisterNetworkProvider()
+        LocationManager.FUSED_PROVIDER -> reRegisterFusedProvider()
+        else -> false
+    }
+
     private fun pushLocation(lat: Double, lng: Double, speed: Float) {
         val time = System.currentTimeMillis()
         val elapsed = SystemClock.elapsedRealtimeNanos()
         val providers = buildList {
             if (gpsProviderAdded) add(LocationManager.GPS_PROVIDER)
             if (networkProviderAdded) add(LocationManager.NETWORK_PROVIDER)
+            if (fusedProviderAdded) add(LocationManager.FUSED_PROVIDER)
         }
         providers.forEach { provider ->
             val loc = Location(provider).apply {
@@ -216,7 +280,39 @@ class LocationSimulator(private val context: Context) {
                     verticalAccuracyMeters = 5.0f; speedAccuracyMetersPerSecond = 0.5f
                 }
             }
-            try { locationManager.setTestProviderLocation(provider, loc) } catch (_: Exception) {}
+            var ok = runCatching { locationManager.setTestProviderLocation(provider, loc) }
+                .onFailure { android.util.Log.w("PikoLocDiag", "push failed provider=$provider ex=$it") }
+                .isSuccess
+            if (!ok) {
+                // The OS silently dropped/disabled this test provider — re-register it exactly
+                // like a manual full stop+restart would, then retry once, so the walk keeps
+                // working without the user having to notice and intervene.
+                val reRegistered = reRegisterProvider(provider)
+                android.util.Log.w("PikoLocDiag", "re-register provider=$provider result=$reRegistered")
+                if (reRegistered) {
+                    ok = runCatching { locationManager.setTestProviderLocation(provider, loc) }
+                        .onFailure { android.util.Log.w("PikoLocDiag", "retry push still failed provider=$provider ex=$it") }
+                        .isSuccess
+                }
+            }
+
+            val streak = when (provider) {
+                LocationManager.GPS_PROVIDER -> gpsFailureStreak
+                LocationManager.NETWORK_PROVIDER -> networkFailureStreak
+                else -> fusedFailureStreak
+            }
+            val newStreak = if (ok) 0 else streak + 1
+            when (provider) {
+                LocationManager.GPS_PROVIDER -> gpsFailureStreak = newStreak
+                LocationManager.NETWORK_PROVIDER -> networkFailureStreak = newStreak
+                else -> fusedFailureStreak = newStreak
+            }
+            if (!ok) {
+                android.util.Log.w("PikoLocDiag", "provider=$provider streak=$newStreak lat=$lat lng=$lng")
+            }
+            if (provider == LocationManager.GPS_PROVIDER && newStreak == persistentFailureThreshold) {
+                onPersistentFailure?.invoke()
+            }
         }
     }
 }

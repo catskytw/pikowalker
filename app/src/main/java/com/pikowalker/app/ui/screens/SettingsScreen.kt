@@ -230,10 +230,15 @@ fun SettingsScreen(viewModel: WalkViewModel, onRequestHcPermission: () -> Unit) 
             PermissionRow(
                 icon = Icons.Default.BatteryChargingFull,
                 iconTint = Color(0xFF00838F),
-                label = "停用電池最佳化",
-                description = "防止 app 在背景被系統強制終止",
+                label = "電池最佳化",
+                description = if (batteryExempt)
+                    "背景偽造GPS不會被系統強制暫停"
+                else
+                    "背景可能被系統暫停，導致定位飄回真實位置",
                 granted = batteryExempt,
-                actionLabel = "停用",
+                grantedLabel = "已停用",
+                actionLabel = "去停用",
+                urgent = true,
                 onAction = if (!batteryExempt) {
                     {
                         try {
@@ -596,6 +601,8 @@ private fun PermissionRow(
     description: String,
     granted: Boolean?,
     actionLabel: String = "前往設定",
+    grantedLabel: String = "已授權",
+    urgent: Boolean = false,
     onAction: (() -> Unit)?
 ) {
     Row(
@@ -615,17 +622,18 @@ private fun PermissionRow(
             Icon(icon, null, modifier = Modifier.size(20.dp), tint = iconTint)
         }
 
+        val isUrgentUnresolved = urgent && granted == false
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
                 label,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF1A1A1A)
+                color = if (isUrgentUnresolved) Color(0xFFD32F2F) else Color(0xFF1A1A1A)
             )
             Text(
                 description,
                 fontSize = 12.sp,
-                color = Color(0xFF757575),
+                color = if (isUrgentUnresolved) Color(0xFFD32F2F) else Color(0xFF757575),
                 lineHeight = 16.sp
             )
         }
@@ -633,7 +641,7 @@ private fun PermissionRow(
         when {
             granted == true && onAction != null -> {
                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    StatusBadge("已授權", ForestGreen, Color(0xFFE8F5E9))
+                    StatusBadge(grantedLabel, ForestGreen, Color(0xFFE8F5E9))
                     TextButton(
                         onClick = onAction,
                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
@@ -643,7 +651,21 @@ private fun PermissionRow(
                     }
                 }
             }
-            granted == true -> StatusBadge("已授權", ForestGreen, Color(0xFFE8F5E9))
+            granted == true -> StatusBadge(grantedLabel, ForestGreen, Color(0xFFE8F5E9))
+            onAction != null && urgent -> {
+                Button(
+                    onClick = onAction,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                    modifier = Modifier.heightIn(min = 34.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFD32F2F),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text(actionLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
             onAction != null -> {
                 FilledTonalButton(
                     onClick = onAction,

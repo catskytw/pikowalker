@@ -1,6 +1,7 @@
 package com.pikowalker.app
 
 import android.app.Application
+import com.pikowalker.app.debug.DebugLogger
 import org.maplibre.android.MapLibre
 
 class PikStepApp : Application() {
@@ -11,6 +12,7 @@ class PikStepApp : Application() {
     override fun onCreate() {
         super.onCreate()
         MapLibre.getInstance(this)
+        DebugLogger.init(this)
         routeRepository // eager init so SharedPreferences load before first UI frame
         scheduleRepository
     }

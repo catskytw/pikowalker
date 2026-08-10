@@ -14,6 +14,7 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.pikowalker.app.MainActivity
 import com.pikowalker.app.PikStepApp
+import com.pikowalker.app.debug.DebugLogger
 import com.pikowalker.app.health.HealthConnectHelper
 import com.pikowalker.app.location.LocationSimulator
 import kotlinx.coroutines.CoroutineScope
@@ -79,7 +80,7 @@ class MockLocationService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        android.util.Log.w("PikoLocDiag", "MockLocationService onCreate pid=${android.os.Process.myPid()}")
+        DebugLogger.log("Service", "onCreate pid=${android.os.Process.myPid()}")
         locationSimulator = LocationSimulator(this)
         locationSimulator.onPersistentFailure = {
             repo.setError("模擬定位似乎被系統關閉，已嘗試自動修復但未成功\n請完全停止再重新開始偽造GPS")
@@ -89,7 +90,7 @@ class MockLocationService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        android.util.Log.w("PikoLocDiag", "onStartCommand action=${intent?.action}")
+        DebugLogger.log("Service", "onStartCommand action=${intent?.action}")
         when (intent?.action) {
             ACTION_HOLD -> {
                 val lat = intent.getDoubleExtra(EXTRA_LAT, 0.0)
@@ -170,8 +171,8 @@ class MockLocationService : Service() {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         val isIgnoringBatteryOpt = pm.isIgnoringBatteryOptimizations(packageName)
         val isDeviceIdle = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) pm.isDeviceIdleMode else false
-        android.util.Log.w(
-            "PikoLocDiag",
+        DebugLogger.log(
+            "Service",
             "$tag isSimulating=${state.isSimulating} isWalkingRoute=${state.isWalkingRoute} " +
                 "batteryOptExempt=$isIgnoringBatteryOpt deviceIdle=$isDeviceIdle " +
                 "wakeLockHeld=${wakeLock?.isHeld} lat=${state.currentLat} lng=${state.currentLng}"
@@ -271,7 +272,7 @@ class MockLocationService : Service() {
     }
 
     override fun onDestroy() {
-        android.util.Log.w("PikoLocDiag", "MockLocationService onDestroy pid=${android.os.Process.myPid()}")
+        DebugLogger.log("Service", "onDestroy pid=${android.os.Process.myPid()}")
         super.onDestroy()
         loopJob?.cancel()
         locationSimulator.stop()

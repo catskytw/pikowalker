@@ -6,6 +6,7 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.Build
 import android.os.SystemClock
+import com.pikowalker.app.debug.DebugLogger
 import com.pikowalker.app.model.WaypointLoopMode
 import kotlin.math.cos
 import kotlin.math.sqrt
@@ -281,17 +282,17 @@ class LocationSimulator(private val context: Context) {
                 }
             }
             var ok = runCatching { locationManager.setTestProviderLocation(provider, loc) }
-                .onFailure { android.util.Log.w("PikoLocDiag", "push failed provider=$provider ex=$it") }
+                .onFailure { DebugLogger.log("Location", "推送失敗 provider=$provider ex=$it") }
                 .isSuccess
             if (!ok) {
                 // The OS silently dropped/disabled this test provider — re-register it exactly
                 // like a manual full stop+restart would, then retry once, so the walk keeps
                 // working without the user having to notice and intervene.
                 val reRegistered = reRegisterProvider(provider)
-                android.util.Log.w("PikoLocDiag", "re-register provider=$provider result=$reRegistered")
+                DebugLogger.log("Location", "重新註冊 provider=$provider result=$reRegistered")
                 if (reRegistered) {
                     ok = runCatching { locationManager.setTestProviderLocation(provider, loc) }
-                        .onFailure { android.util.Log.w("PikoLocDiag", "retry push still failed provider=$provider ex=$it") }
+                        .onFailure { DebugLogger.log("Location", "重試後仍失敗 provider=$provider ex=$it") }
                         .isSuccess
                 }
             }
@@ -308,7 +309,7 @@ class LocationSimulator(private val context: Context) {
                 else -> fusedFailureStreak = newStreak
             }
             if (!ok) {
-                android.util.Log.w("PikoLocDiag", "provider=$provider streak=$newStreak lat=$lat lng=$lng")
+                DebugLogger.log("Location", "provider=$provider 連續失敗=$newStreak lat=$lat lng=$lng")
             }
             if (provider == LocationManager.GPS_PROVIDER && newStreak == persistentFailureThreshold) {
                 onPersistentFailure?.invoke()

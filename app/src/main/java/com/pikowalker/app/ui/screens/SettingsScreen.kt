@@ -254,6 +254,11 @@ fun SettingsScreen(viewModel: WalkViewModel, onRequestHcPermission: () -> Unit) 
             )
         }
 
+        // ── 除錯 ─────────────────────────────────────────────────────────────
+        SettingSection(title = "除錯") {
+            DebugSectionContent()
+        }
+
         // ── 版本資訊 ──────────────────────────────────────────────────────────
         SettingSection(title = "版本資訊") {
             Text(
@@ -281,6 +286,52 @@ private fun checkNotificationPermission(context: Context): Boolean =
 private fun launchIntent(context: Context, intent: Intent) {
     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     context.startActivity(intent)
+}
+
+@Composable
+private fun DebugSectionContent() {
+    val context = LocalContext.current
+    var debugEnabled by remember { mutableStateOf(com.pikowalker.app.debug.DebugLogger.enabled) }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("除錯模式", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1A1A1A))
+            Text(
+                "記錄定位模擬相關的事件，方便回報問題時提供紀錄",
+                fontSize = 12.sp, color = Color(0xFF757575), lineHeight = 16.sp
+            )
+        }
+        Switch(
+            checked = debugEnabled,
+            onCheckedChange = {
+                debugEnabled = it
+                com.pikowalker.app.debug.DebugLogger.setEnabled(context, it)
+            },
+            colors = SwitchDefaults.colors(checkedTrackColor = ForestGreen)
+        )
+    }
+
+    OutlinedButton(
+        onClick = {
+            val file = com.pikowalker.app.debug.DebugLogger.exportToFile(context)
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", file
+            )
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "PikoWalker 除錯紀錄")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "分享除錯紀錄"))
+        },
+        modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)
+    ) {
+        Text("匯出並分享除錯紀錄", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
 }
 
 @Composable

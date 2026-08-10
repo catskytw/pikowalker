@@ -214,13 +214,16 @@ class MockLocationService : Service() {
                 val now = System.currentTimeMillis()
                 if (now - lastHcInsertMs >= 30_000L) {
                     val stepsInPeriod = totalSteps - stepsAtLastInsert
+                    val start = lastHcInsertMs
+                    stepsAtLastInsert = totalSteps
+                    lastHcInsertMs = now
                     if (stepsInPeriod > 0) {
-                        val start = lastHcInsertMs
-                        stepsAtLastInsert = totalSteps
-                        lastHcInsertMs = now
                         serviceScope.launch(Dispatchers.IO) {
+                            DebugLogger.log("HealthConnect", "準備寫入 steps=$stepsInPeriod")
                             healthConnectHelper.insertSteps(stepsInPeriod, start, now)
                         }
+                    } else {
+                        DebugLogger.log("HealthConnect", "略過寫入，這段時間步數=$stepsInPeriod")
                     }
                 }
 

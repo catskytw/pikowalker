@@ -1,6 +1,7 @@
 package com.pikowalker.app.health
 
 import android.content.Context
+import com.pikowalker.app.debug.DebugLogger
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.StepsRecord
@@ -103,8 +104,15 @@ class HealthConnectHelper(private val context: Context) {
     }
 
     suspend fun insertSteps(steps: Long, startMs: Long, endMs: Long): Boolean {
-        if (steps <= 0 || endMs <= startMs) return false
-        val client = getClient() ?: return false
+        if (steps <= 0 || endMs <= startMs) {
+            DebugLogger.log("HealthConnect", "insertSteps 略過 steps=$steps startMs=$startMs endMs=$endMs")
+            return false
+        }
+        val client = getClient()
+        if (client == null) {
+            DebugLogger.log("HealthConnect", "insertSteps 失敗：Health Connect 不可用")
+            return false
+        }
         return try {
             val zone = java.time.ZoneId.systemDefault().rules
                 .getOffset(java.time.Instant.ofEpochMilli(startMs))
@@ -117,7 +125,11 @@ class HealthConnectHelper(private val context: Context) {
                 endZoneOffset = zone
             )
             client.insertRecords(listOf(record))
+            DebugLogger.log("HealthConnect", "insertSteps 成功 steps=$steps")
             true
-        } catch (_: Exception) { false }
+        } catch (e: Exception) {
+            DebugLogger.log("HealthConnect", "insertSteps 例外 steps=$steps ex=$e")
+            false
+        }
     }
 }

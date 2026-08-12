@@ -58,6 +58,16 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
         _pendingDeepLinkPoint.value = null
     }
 
+    /** True while a shared Google Maps short link (goo.gl/maps.app.goo.gl) is being resolved —
+     *  that redirect chain can take a few retries, so the map shows a "解析連結中" banner
+     *  instead of looking like it silently ignored the share. */
+    private val _resolvingSharedLink = MutableStateFlow(false)
+    val resolvingSharedLink: StateFlow<Boolean> = _resolvingSharedLink.asStateFlow()
+
+    fun setResolvingSharedLink(resolving: Boolean) {
+        _resolvingSharedLink.value = resolving
+    }
+
     fun setError(message: String?) = repo.setError(message)
 
     private val _todaySteps = MutableStateFlow(0L)

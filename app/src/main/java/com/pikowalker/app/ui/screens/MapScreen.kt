@@ -95,6 +95,7 @@ fun MapScreen(viewModel: WalkViewModel) {
     val savedRoutes by viewModel.savedRoutes.collectAsState()
     val lastSavedName by viewModel.lastSavedName.collectAsState()
     val pendingDeepLinkPoint by viewModel.pendingDeepLinkPoint.collectAsState()
+    val resolvingSharedLink by viewModel.resolvingSharedLink.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val geocodingRepo = remember { GeocodingRepository(context) }
@@ -382,6 +383,22 @@ fun MapScreen(viewModel: WalkViewModel) {
                         },
                         onDismiss = { searchResult = null }
                     )
+                }
+                if (resolvingSharedLink) {
+                    Surface(shape = RoundedCornerShape(12.dp), color = ForestGreen.copy(alpha = 0.92f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(12.dp),
+                                strokeWidth = 1.5.dp,
+                                color = Color.White
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("解析分享連結中…", fontSize = 11.sp, color = Color.White)
+                        }
+                    }
                 }
                 state.errorMessage?.let { msg ->
                     Surface(shape = RoundedCornerShape(12.dp), color = EarthRed.copy(alpha = 0.92f)) {

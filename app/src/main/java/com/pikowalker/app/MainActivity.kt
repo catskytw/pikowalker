@@ -156,23 +156,28 @@ class MainActivity : ComponentActivity() {
         // intermittently fail a link that resolves fine moments later, so retry a few times.
         val url = Regex("https?://\\S+").find(text)?.value ?: return
         lifecycleScope.launch {
-            var resolved: String? = null
-            var coords: Pair<Double, Double>? = null
-            repeat(3) { attempt ->
-                if (coords != null) return@repeat
-                if (attempt > 0) delay(500)
-                resolved = resolveFinalUrl(url)
-                coords = resolved?.let { parseCoordsFromText(it) }
-            }
-            if (coords != null) {
-                val (lat, lng) = coords!!
-                viewModel.setDeepLinkPoint(lat, lng)
-            } else if (resolved?.contains("/maps/place/") == true) {
-                // A business/POI share references Google's internal place ID rather than
-                // embedding a coordinate — nothing here to parse without scraping their page.
-                viewModel.setError("這是商家地點連結，Google 沒有把座標放進連結裡，請改用複製貼上經緯度")
-            } else {
-                viewModel.setError("無法解析分享的地圖連結，請改用複製貼上經緯度")
+            viewModel.setResolvingSharedLink(true)
+            try {
+                var resolved: String? = null
+                var coords: Pair<Double, Double>? = null
+                repeat(3) { attempt ->
+                    if (coords != null) return@repeat
+                    if (attempt > 0) delay(500)
+                    resolved = resolveFinalUrl(url)
+                    coords = resolved?.let { parseCoordsFromText(it) }
+                }
+                if (coords != null) {
+                    val (lat, lng) = coords!!
+                    viewModel.setDeepLinkPoint(lat, lng)
+                } else if (resolved?.contains("/maps/place/") == true) {
+                    // A business/POI share references Google's internal place ID rather than
+                    // embedding a coordinate — nothing here to parse without scraping their page.
+                    viewModel.setError("這是商家地點連結，Google 沒有把座標放進連結裡，請改用複製貼上經緯度")
+                } else {
+                    viewModel.setError("無法解析分享的地圖連結，請改用複製貼上經緯度")
+                }
+            } finally {
+                viewModel.setResolvingSharedLink(false)
             }
         }
     }

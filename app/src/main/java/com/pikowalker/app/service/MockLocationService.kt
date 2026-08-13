@@ -18,6 +18,7 @@ import com.pikowalker.app.debug.DebugLogger
 import com.pikowalker.app.health.HealthConnectHelper
 import com.pikowalker.app.location.LocationSimulator
 import com.pikowalker.app.settings.AppSettings
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -65,7 +66,16 @@ class MockLocationService : Service() {
     }
 
     private val repo get() = (applicationContext as PikStepApp).walkRepository
-    private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    // Without this, any uncaught exception in a background tick (location push, Health Connect
+    // write, notification update — not just mock-location calls, which already catch their own
+    // failures) propagates to the thread's default handler and takes down the whole app process.
+    // A background hiccup should surface as an in-app warning, never a hard crash.
+    private val serviceExceptionHandler = CoroutineExceptionHandler { _, e ->
+        DebugLogger.log("Service", "背景執行緒發生未預期例外，已攔截：$e")
+        repo.setError("背景定位服務發生未預期的錯誤\n請重新開始偽造GPS")
+    }
+    private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob() + serviceExceptionHandler)
     private lateinit var locationSimulator: LocationSimulator
     private lateinit var healthConnectHelper: HealthConnectHelper
     private var wakeLock: PowerManager.WakeLock? = null
@@ -186,9 +196,17 @@ class MockLocationService : Service() {
         loopJob = serviceScope.launch {
             while (true) {
                 delay(1000)
-                locationSimulator.keepAlive()
-                tick++
-                if (tick % 30 == 0) logDiagnosticSnapshot("hold")
+                try {
+                    locationSimulator.keepAlive()
+                    tick++
+                    if (tick % 30 == 0) logDiagnosticSnapshot("hold")
+                } catch (ce: kotlinx.coroutines.CancellationException) {
+                    throw ce
+                } catch (e: Throwable) {
+                    // One bad tick shouldn't kill the loop — log and keep holding rather than
+                    // silently freezing the position until the user notices and restarts.
+                    DebugLogger.log("Service", "hold tick 發生例外：$e")
+                }
             }
         }
     }
@@ -198,56 +216,74 @@ class MockLocationService : Service() {
         loopJob = serviceScope.launch {
             while (true) {
                 delay(1000)
-                val state = repo.currentState
-
-                val justReachedEnd = locationSimulator.tick(state.speedKmh, state.waypointLoopMode)
-
-                fractionalSteps += stepsPerSecond(state.speedKmh)
-                val newSteps = fractionalSteps.toLong()
-                fractionalSteps -= newSteps
-                totalSteps += newSteps.coerceAtLeast(0L)
-
-                val distanceMeters = totalSteps * 0.75
-                elapsedSeconds++
-                repo.updateStats(totalSteps, distanceMeters, elapsedSeconds)
-                repo.updateCurrentPosition(locationSimulator.currentLat, locationSimulator.currentLng, locationSimulator.currentBearing)
-
-                val now = System.currentTimeMillis()
-                if (now - lastHcInsertMs >= 30_000L) {
-                    val stepsInPeriod = totalSteps - stepsAtLastInsert
-                    val start = lastHcInsertMs
-                    stepsAtLastInsert = totalSteps
-                    lastHcInsertMs = now
-                    if (AppSettings.writeStepsEnabled && stepsInPeriod > 0) {
-                        serviceScope.launch(Dispatchers.IO) {
-                            DebugLogger.log("HealthConnect", "準備寫入 steps=$stepsInPeriod")
-                            healthConnectHelper.insertSteps(stepsInPeriod, start, now)
-                        }
-                    } else {
-                        DebugLogger.log("HealthConnect", "略過寫入，這段時間步數=$stepsInPeriod writeStepsEnabled=${AppSettings.writeStepsEnabled}")
-                    }
+                val shouldStop = try {
+                    walkTick()
+                } catch (ce: kotlinx.coroutines.CancellationException) {
+                    throw ce
+                } catch (e: Throwable) {
+                    DebugLogger.log("Service", "walk tick 發生例外：$e")
+                    repo.setError("背景定位服務發生未預期的錯誤\n請重新開始偽造GPS")
+                    false
                 }
-
-                if (elapsedSeconds % 5 == 0) {
-                    val km = "%.1f".format(distanceMeters / 1000.0)
-                    updateNotification(
-                        "已走 ${"%,d".format(totalSteps)} 步 · $km km · ${repo.currentState.elapsedTime}"
-                    )
-                }
-
-                if (state.stepLimit > 0 && totalSteps >= state.stepLimit) {
-                    settleIntoHold("📍 已達步數上限，靜止定位中")
-                    return@launch
-                }
-
-                if (justReachedEnd) {
-                    settleIntoHold("📍 已到達終點，靜止定位中")
-                    return@launch
-                }
-
-                if (elapsedSeconds % 30 == 0) logDiagnosticSnapshot("walk")
+                if (shouldStop) return@launch
             }
         }
+    }
+
+    /** One tick of the walk loop. Returns true once the loop should stop (route settled into a
+     *  hold) — the caller breaks out rather than this function using a non-local return, since
+     *  it's no longer the loop's own lambda body (see the try/catch wrapping it in
+     *  [startWalkLoop] that keeps a single bad tick from crashing the whole app). */
+    private fun walkTick(): Boolean {
+        val state = repo.currentState
+
+        val justReachedEnd = locationSimulator.tick(state.speedKmh, state.waypointLoopMode)
+
+        fractionalSteps += stepsPerSecond(state.speedKmh)
+        val newSteps = fractionalSteps.toLong()
+        fractionalSteps -= newSteps
+        totalSteps += newSteps.coerceAtLeast(0L)
+
+        val distanceMeters = totalSteps * 0.75
+        elapsedSeconds++
+        repo.updateStats(totalSteps, distanceMeters, elapsedSeconds)
+        repo.updateCurrentPosition(locationSimulator.currentLat, locationSimulator.currentLng, locationSimulator.currentBearing)
+
+        val now = System.currentTimeMillis()
+        if (now - lastHcInsertMs >= 30_000L) {
+            val stepsInPeriod = totalSteps - stepsAtLastInsert
+            val start = lastHcInsertMs
+            stepsAtLastInsert = totalSteps
+            lastHcInsertMs = now
+            if (AppSettings.writeStepsEnabled && stepsInPeriod > 0) {
+                serviceScope.launch(Dispatchers.IO) {
+                    DebugLogger.log("HealthConnect", "準備寫入 steps=$stepsInPeriod")
+                    healthConnectHelper.insertSteps(stepsInPeriod, start, now)
+                }
+            } else {
+                DebugLogger.log("HealthConnect", "略過寫入，這段時間步數=$stepsInPeriod writeStepsEnabled=${AppSettings.writeStepsEnabled}")
+            }
+        }
+
+        if (elapsedSeconds % 5 == 0) {
+            val km = "%.1f".format(distanceMeters / 1000.0)
+            updateNotification(
+                "已走 ${"%,d".format(totalSteps)} 步 · $km km · ${repo.currentState.elapsedTime}"
+            )
+        }
+
+        if (state.stepLimit > 0 && totalSteps >= state.stepLimit) {
+            settleIntoHold("📍 已達步數上限，靜止定位中")
+            return true
+        }
+
+        if (justReachedEnd) {
+            settleIntoHold("📍 已到達終點，靜止定位中")
+            return true
+        }
+
+        if (elapsedSeconds % 30 == 0) logDiagnosticSnapshot("walk")
+        return false
     }
 
     /** Stops advancing and settles into a static hold at wherever the position currently is —

@@ -74,4 +74,8 @@ object DebugLogger {
         file.writeText(header + snapshotText(minutes))
         return file
     }
+
+    /** Recent in-memory entries as plain text, regardless of [enabled] — used to attach whatever
+     *  little context exists to a crash report (see [com.pikowalker.app.debug.CrashLogger]). */
+    fun recentEntriesText(minutes: Int = 10): String = snapshotText(minutes)
 }

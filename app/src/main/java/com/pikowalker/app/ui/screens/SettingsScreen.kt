@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -367,6 +368,34 @@ private fun DebugSectionContent() {
         modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)
     ) {
         Text("匯出並分享除錯紀錄", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+
+    val crashReport = remember { com.pikowalker.app.debug.CrashLogger.latestReport(context) }
+    if (crashReport != null) {
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "偵測到上次的當機紀錄（${crashReport.name}）",
+            fontSize = 11.sp, color = Color(0xFFD32F2F)
+        )
+        OutlinedButton(
+            onClick = {
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    context, "${context.packageName}.fileprovider", crashReport
+                )
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, "PikoWalker 當機紀錄")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(intent, "分享當機紀錄"))
+            },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD32F2F)),
+            border = BorderStroke(1.dp, Color(0xFFD32F2F))
+        ) {
+            Text("分享上次的當機紀錄", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 

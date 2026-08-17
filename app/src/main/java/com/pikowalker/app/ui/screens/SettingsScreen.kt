@@ -51,6 +51,7 @@ import com.pikowalker.app.update.UpdateChecker
 import com.pikowalker.app.update.ApkDownloader
 import com.pikowalker.app.update.UpdateUiState
 import com.pikowalker.app.viewmodel.WalkViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -328,28 +329,12 @@ private fun WriteStepsToggleRow(hcPermitted: Boolean) {
 @Composable
 private fun DebugSectionContent() {
     val context = LocalContext.current
-    var debugEnabled by remember { mutableStateOf(com.pikowalker.app.debug.DebugLogger.enabled) }
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text("除錯模式", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1A1A1A))
-            Text(
-                "記錄定位模擬相關的事件，方便回報問題時提供紀錄",
-                fontSize = 12.sp, color = Color(0xFF757575), lineHeight = 16.sp
-            )
-        }
-        Switch(
-            checked = debugEnabled,
-            onCheckedChange = {
-                debugEnabled = it
-                com.pikowalker.app.debug.DebugLogger.setEnabled(context, it)
-            },
-            colors = SwitchDefaults.colors(checkedTrackColor = ForestGreen)
-        )
-    }
+    Text(
+        "自動記錄最近 10 分鐘的執行紀錄，有問題可直接匯出分享",
+        fontSize = 12.sp, color = Color(0xFF757575), lineHeight = 16.sp,
+        modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+    )
 
     OutlinedButton(
         onClick = {
@@ -370,17 +355,18 @@ private fun DebugSectionContent() {
         Text("匯出並分享除錯紀錄", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
 
-    val crashReport = remember { com.pikowalker.app.debug.CrashLogger.latestReport(context) }
-    if (crashReport != null) {
+    var crashReport by remember { mutableStateOf(com.pikowalker.app.debug.CrashLogger.latestReport(context)) }
+    val scope = rememberCoroutineScope()
+    crashReport?.let { report ->
         Spacer(Modifier.height(8.dp))
         Text(
-            "偵測到上次的當機紀錄（${crashReport.name}）",
+            "偵測到上次的當機紀錄（${report.name}）",
             fontSize = 11.sp, color = Color(0xFFD32F2F)
         )
         OutlinedButton(
             onClick = {
                 val uri = androidx.core.content.FileProvider.getUriForFile(
-                    context, "${context.packageName}.fileprovider", crashReport
+                    context, "${context.packageName}.fileprovider", report
                 )
                 val intent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
@@ -389,6 +375,14 @@ private fun DebugSectionContent() {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 context.startActivity(Intent.createChooser(intent, "分享當機紀錄"))
+                // Hide the prompt immediately, but delay the actual file deletion — the share
+                // sheet reads the FileProvider URI asynchronously after the user picks a target
+                // app, so deleting right away could race an app still streaming the content.
+                crashReport = null
+                scope.launch {
+                    delay(10_000)
+                    com.pikowalker.app.debug.CrashLogger.deleteReport(report)
+                }
             },
             modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD32F2F)),

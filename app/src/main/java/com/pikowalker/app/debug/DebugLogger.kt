@@ -8,45 +8,44 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentLinkedDeque
+import java.util.concurrent.atomic.AtomicLong
 
 /** An app-maintained rolling log, separate from Logcat — a sideloaded app can't read its own
  *  Logcat output on modern Android, so this is the only way for a user to hand us a record of
- *  what actually happened around the moment they noticed a problem (e.g. 定位飄走). Only
- *  collects anything while [enabled], and only ever keeps the most recent [RETENTION_MS]. */
+ *  what actually happened around the moment they noticed a problem (e.g. 定位飄走).
+ *
+ *  Always collects (bounded to the most recent [RETENTION_MS], and hard-capped at
+ *  [MAX_BYTES] regardless of age as a backstop against runaway logging) — an earlier version
+ *  only buffered while a "除錯模式" switch was on, which meant the one time it actually mattered
+ *  (an unexpected crash) there was nothing recorded, because nobody turns on a debug switch
+ *  before they know something's about to go wrong. Nothing leaves the device unless the user
+ *  explicitly exports/shares it, so always-on local buffering costs nothing privacy-wise. */
 object DebugLogger {
-    private const val PREFS = "pikowalker_debug"
-    private const val KEY_ENABLED = "debug_enabled"
     private const val RETENTION_MS = 10 * 60 * 1000L
-
-    @Volatile
-    var enabled: Boolean = false
-        private set
+    private const val MAX_BYTES = 1 * 1024 * 1024L
+    private const val MAX_EXPORTS = 5
 
     private val entries = ConcurrentLinkedDeque<Pair<Long, String>>()
+    private val totalBytes = AtomicLong(0)
     private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.TAIWAN)
-
-    fun init(context: Context) {
-        enabled = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
-    }
-
-    fun setEnabled(context: Context, value: Boolean) {
-        enabled = value
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, value).apply()
-        if (value) log("Debug", "除錯模式已開啟")
-    }
 
     fun log(tag: String, message: String) {
         android.util.Log.d("Piko-$tag", message)
-        if (!enabled) return
         val now = System.currentTimeMillis()
-        entries.addLast(now to "[${timeFormat.format(Date(now))}] $tag: $message")
-        pruneOlderThan(now)
+        val line = "[${timeFormat.format(Date(now))}] $tag: $message"
+        entries.addLast(now to line)
+        totalBytes.addAndGet(line.toByteArray(Charsets.UTF_8).size.toLong())
+        prune(now)
     }
 
-    private fun pruneOlderThan(now: Long) {
+    private fun prune(now: Long) {
         while (true) {
             val head = entries.peekFirst() ?: break
-            if (now - head.first > RETENTION_MS) entries.pollFirst() else break
+            val expired = now - head.first > RETENTION_MS
+            val overBudget = totalBytes.get() > MAX_BYTES
+            if (!expired && !overBudget) break
+            entries.pollFirst()
+            totalBytes.addAndGet(-head.second.toByteArray(Charsets.UTF_8).size.toLong())
         }
     }
 
@@ -54,13 +53,14 @@ object DebugLogger {
         val cutoff = System.currentTimeMillis() - minutes * 60_000L
         val lines = entries.filter { it.first >= cutoff }.map { it.second }
         return if (lines.isEmpty())
-            "（沒有紀錄 —— 可能除錯模式剛開啟，或這段時間內沒有偽造GPS活動）"
+            "（沒有紀錄 —— 這段時間內沒有偽造GPS相關活動）"
         else lines.joinToString("\n")
     }
 
     /** Writes a snapshot of the last [minutes] to a shareable file in cache storage and returns
-     *  it, ready to hand to a share Intent via FileProvider. */
-    fun exportToFile(context: Context, minutes: Int = 5): File {
+     *  it, ready to hand to a share Intent via FileProvider. Older exports beyond
+     *  [MAX_EXPORTS] are deleted so repeated use doesn't quietly pile up files in cache. */
+    fun exportToFile(context: Context, minutes: Int = 10): File {
         val dir = File(context.cacheDir, "debug_logs").apply { mkdirs() }
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val file = File(dir, "pikowalker_debug_$stamp.txt")
@@ -72,10 +72,13 @@ object DebugLogger {
             appendLine("---")
         }
         file.writeText(header + snapshotText(minutes))
+        runCatching {
+            dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(MAX_EXPORTS)?.forEach { it.delete() }
+        }
         return file
     }
 
-    /** Recent in-memory entries as plain text, regardless of [enabled] — used to attach whatever
-     *  little context exists to a crash report (see [com.pikowalker.app.debug.CrashLogger]). */
+    /** Recent in-memory entries as plain text — used to attach whatever context exists to a
+     *  crash report (see [com.pikowalker.app.debug.CrashLogger]). */
     fun recentEntriesText(minutes: Int = 10): String = snapshotText(minutes)
 }

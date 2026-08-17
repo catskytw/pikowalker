@@ -17,6 +17,7 @@ import java.util.Locale
  *  app reinstall and is reachable via `adb pull` without root. */
 object CrashLogger {
     private const val DIR_NAME = "crash_logs"
+    private const val MAX_REPORTS = 5
 
     fun install(context: Context) {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
@@ -50,6 +51,16 @@ object CrashLogger {
             appendLine(DebugLogger.recentEntriesText())
         }
         runCatching { file.writeText(report) }
+        runCatching { pruneOldReports(dir) }
+    }
+
+    /** Keeps only the most recent [MAX_REPORTS] — this directory lives in app-specific external
+     *  storage and survives reinstalls, so without a cap it would grow forever. */
+    private fun pruneOldReports(dir: File) {
+        val files = dir.listFiles() ?: return
+        files.sortedByDescending { it.lastModified() }
+            .drop(MAX_REPORTS)
+            .forEach { it.delete() }
     }
 
     private fun crashDir(context: Context): File? {
@@ -61,4 +72,10 @@ object CrashLogger {
      *  requiring the app to have survived long enough to reach the debug-log export flow. */
     fun latestReport(context: Context): File? =
         crashDir(context)?.listFiles()?.maxByOrNull { it.lastModified() }
+
+    /** Called once the user has shared a report — deletes it so Settings stops showing a stale
+     *  "上次的當機紀錄" prompt for something already sent. */
+    fun deleteReport(file: File) {
+        runCatching { file.delete() }
+    }
 }

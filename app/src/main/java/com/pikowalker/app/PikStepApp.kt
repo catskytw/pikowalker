@@ -2,7 +2,6 @@ package com.pikowalker.app
 
 import android.app.Application
 import com.pikowalker.app.debug.CrashLogger
-import com.pikowalker.app.debug.DebugLogger
 import com.pikowalker.app.settings.AppSettings
 import org.maplibre.android.MapLibre
 
@@ -15,7 +14,6 @@ class PikStepApp : Application() {
         super.onCreate()
         CrashLogger.install(this) // first — catches failures in every init line below too
         MapLibre.getInstance(this)
-        DebugLogger.init(this)
         AppSettings.init(this)
         routeRepository // eager init so SharedPreferences load before first UI frame
         scheduleRepository

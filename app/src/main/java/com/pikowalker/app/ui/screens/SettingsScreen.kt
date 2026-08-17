@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import java.io.File
 import com.pikowalker.app.BuildConfig
 import com.pikowalker.app.model.SavedRoute
 import com.pikowalker.app.model.ScheduleConfig
@@ -355,40 +356,70 @@ private fun DebugSectionContent() {
         Text("匯出並分享除錯紀錄", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
 
-    var crashReport by remember { mutableStateOf(com.pikowalker.app.debug.CrashLogger.latestReport(context)) }
+    ReportShareRow(
+        initialReport = { com.pikowalker.app.debug.CrashLogger.latestReport(context) },
+        promptPrefix = "偵測到上次的當機紀錄",
+        shareSubject = "PikoWalker 當機紀錄",
+        shareChooserTitle = "分享當機紀錄",
+        buttonLabel = "分享上次的當機紀錄",
+        accentColor = Color(0xFFD32F2F)
+    )
+    ReportShareRow(
+        initialReport = { com.pikowalker.app.debug.CrashLogger.latestCaughtReport(context) },
+        promptPrefix = "偵測到上次自動恢復的異常事件（未實際當機）",
+        shareSubject = "PikoWalker 異常事件紀錄",
+        shareChooserTitle = "分享異常事件紀錄",
+        buttonLabel = "分享上次的異常事件紀錄",
+        accentColor = Color(0xFFEF6C00)
+    )
+}
+
+/** Shared UI for both the fatal-crash and caught-but-recovered report prompts — same
+ *  detect/share/delayed-delete mechanics, different framing and accent color. */
+@Composable
+private fun ReportShareRow(
+    initialReport: () -> File?,
+    promptPrefix: String,
+    shareSubject: String,
+    shareChooserTitle: String,
+    buttonLabel: String,
+    accentColor: Color
+) {
+    val context = LocalContext.current
+    var report by remember { mutableStateOf(initialReport()) }
     val scope = rememberCoroutineScope()
-    crashReport?.let { report ->
+    report?.let { file ->
         Spacer(Modifier.height(8.dp))
         Text(
-            "偵測到上次的當機紀錄（${report.name}）",
-            fontSize = 11.sp, color = Color(0xFFD32F2F)
+            "$promptPrefix（${file.name}）",
+            fontSize = 11.sp, color = accentColor
         )
         OutlinedButton(
             onClick = {
                 val uri = androidx.core.content.FileProvider.getUriForFile(
-                    context, "${context.packageName}.fileprovider", report
+                    context, "${context.packageName}.fileprovider", file
                 )
                 val intent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_STREAM, uri)
-                    putExtra(Intent.EXTRA_SUBJECT, "PikoWalker 當機紀錄")
+                    putExtra(Intent.EXTRA_SUBJECT, shareSubject)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                context.startActivity(Intent.createChooser(intent, "分享當機紀錄"))
+                context.startActivity(Intent.createChooser(intent, shareChooserTitle))
                 // Hide the prompt immediately, but delay the actual file deletion — the share
                 // sheet reads the FileProvider URI asynchronously after the user picks a target
                 // app, so deleting right away could race an app still streaming the content.
-                crashReport = null
+                report = null
                 scope.launch {
                     delay(10_000)
-                    com.pikowalker.app.debug.CrashLogger.deleteReport(report)
+                    com.pikowalker.app.debug.CrashLogger.deleteReport(file)
                 }
             },
             modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD32F2F)),
-            border = BorderStroke(1.dp, Color(0xFFD32F2F))
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor),
+            border = BorderStroke(1.dp, accentColor)
         ) {
-            Text("分享上次的當機紀錄", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text(buttonLabel, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

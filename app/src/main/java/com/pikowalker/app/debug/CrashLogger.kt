@@ -10,11 +10,20 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Captures uncaught exceptions — including ones during app startup, before the user could ever
- *  reach the debug-log export screen — to a file outside the app's own process lifetime, so a
- *  crash-on-launch is diagnosable even though the app never got far enough to be told to log
- *  anything. Written to app-specific external storage (not cache/internal) so it survives an
- *  app reinstall and is reachable via `adb pull` without root. */
+/** Captures exceptions to a file outside the app's own process lifetime, so a failure is
+ *  diagnosable even if the app never got far enough (or never survived long enough) to be told
+ *  to log anything through the ordinary in-memory [DebugLogger]. Written to app-specific external
+ *  storage (not cache/internal) so it survives an app reinstall and is reachable via `adb pull`
+ *  without root.
+ *
+ *  Two kinds of report share this storage:
+ *  - **Fatal** ("crash_" prefix, via [install]): a genuinely uncaught exception that took the
+ *    whole app down.
+ *  - **Caught** ("caught_" prefix, via [writeCaughtReport]): an exception a resilience boundary
+ *    (e.g. [com.pikowalker.app.service.MockLocationService]'s per-tick try/catch) already
+ *    recovered from, so the app kept running — but the failure is still worth keeping evidence
+ *    of, since otherwise it only ever existed in the current session's live [DebugLogger] buffer
+ *    and vanishes the moment the app restarts. */
 object CrashLogger {
     private const val DIR_NAME = "crash_logs"
     private const val MAX_REPORTS = 5
@@ -23,7 +32,7 @@ object CrashLogger {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
-                writeReport(context, thread, throwable)
+                writeReport(context, "crash", throwable, thread)
             } catch (_: Throwable) {
                 // Never let crash reporting itself block the crash from proceeding normally.
             }
@@ -31,19 +40,26 @@ object CrashLogger {
         }
     }
 
-    private fun writeReport(context: Context, thread: Thread, throwable: Throwable) {
+    /** For an exception a resilience boundary already caught and recovered from — the app did
+     *  NOT crash, but the failure is written to disk anyway so it isn't lost on next restart. */
+    fun writeCaughtReport(context: Context, tag: String, throwable: Throwable) {
+        runCatching { writeReport(context, "caught", throwable, thread = null, tag = tag) }
+    }
+
+    private fun writeReport(context: Context, prefix: String, throwable: Throwable, thread: Thread?, tag: String? = null) {
         val dir = crashDir(context) ?: return
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val file = File(dir, "crash_$stamp.txt")
+        val file = File(dir, "${prefix}_$stamp.txt")
 
         val stackTrace = StringWriter().also { throwable.printStackTrace(PrintWriter(it)) }.toString()
 
         val report = buildString {
-            appendLine("PikoWalker 當機紀錄")
+            appendLine(if (thread != null) "PikoWalker 當機紀錄" else "PikoWalker 攔截到的異常（App 已自動恢復，非當機）")
+            if (tag != null) appendLine("來源：$tag")
             appendLine("時間：${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.TAIWAN).format(Date())}")
             appendLine("版本：${BuildConfig.VERSION_NAME}")
             appendLine("裝置：${Build.MANUFACTURER} ${Build.MODEL}（Android ${Build.VERSION.RELEASE}）")
-            appendLine("執行緒：${thread.name}")
+            if (thread != null) appendLine("執行緒：${thread.name}")
             appendLine("---")
             appendLine(stackTrace)
             appendLine("---")
@@ -54,8 +70,9 @@ object CrashLogger {
         runCatching { pruneOldReports(dir) }
     }
 
-    /** Keeps only the most recent [MAX_REPORTS] — this directory lives in app-specific external
-     *  storage and survives reinstalls, so without a cap it would grow forever. */
+    /** Keeps only the most recent [MAX_REPORTS] total (fatal + caught combined) — this directory
+     *  lives in app-specific external storage and survives reinstalls, so without a cap it would
+     *  grow forever. */
     private fun pruneOldReports(dir: File) {
         val files = dir.listFiles() ?: return
         files.sortedByDescending { it.lastModified() }
@@ -68,13 +85,18 @@ object CrashLogger {
         return File(base, DIR_NAME).apply { mkdirs() }
     }
 
-    /** Most recent crash report file, if any — used to offer a share button in Settings without
-     *  requiring the app to have survived long enough to reach the debug-log export flow. */
+    /** Most recent genuine crash report, if any — used to offer a share button in Settings
+     *  without requiring the app to have survived long enough to reach the debug-log export flow. */
     fun latestReport(context: Context): File? =
-        crashDir(context)?.listFiles()?.maxByOrNull { it.lastModified() }
+        crashDir(context)?.listFiles()?.filter { it.name.startsWith("crash_") }?.maxByOrNull { it.lastModified() }
+
+    /** Most recent caught-but-recovered report, if any — shown separately from [latestReport]
+     *  since the app didn't actually crash for these. */
+    fun latestCaughtReport(context: Context): File? =
+        crashDir(context)?.listFiles()?.filter { it.name.startsWith("caught_") }?.maxByOrNull { it.lastModified() }
 
     /** Called once the user has shared a report — deletes it so Settings stops showing a stale
-     *  "上次的當機紀錄" prompt for something already sent. */
+     *  prompt for something already sent. */
     fun deleteReport(file: File) {
         runCatching { file.delete() }
     }

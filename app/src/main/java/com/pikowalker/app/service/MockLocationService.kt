@@ -14,6 +14,7 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.pikowalker.app.MainActivity
 import com.pikowalker.app.PikStepApp
+import com.pikowalker.app.debug.CrashLogger
 import com.pikowalker.app.debug.DebugLogger
 import com.pikowalker.app.health.HealthConnectHelper
 import com.pikowalker.app.location.LocationSimulator
@@ -74,6 +75,7 @@ class MockLocationService : Service() {
     private val serviceExceptionHandler = CoroutineExceptionHandler { _, e ->
         DebugLogger.log("Service", "背景執行緒發生未預期例外，已攔截：$e")
         repo.setError("背景定位服務發生未預期的錯誤\n請重新開始偽造GPS")
+        reportCaughtException("MockLocationService/scope", e)
     }
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob() + serviceExceptionHandler)
     private lateinit var locationSimulator: LocationSimulator
@@ -86,6 +88,19 @@ class MockLocationService : Service() {
     private var stepsAtLastInsert = 0L  // totalSteps value at last HC insert
     private var elapsedSeconds = 0
     private var lastHcInsertMs = 0L
+    private var lastCaughtReportMs = 0L
+
+    /** Persists at most one caught-exception report per minute — a tick failure that keeps
+     *  recurring (e.g. once a second) would otherwise spam the capped [CrashLogger] storage and
+     *  evict earlier, possibly more informative reports within seconds. One example per window
+     *  is enough; the live [DebugLogger] buffer already has the full blow-by-blow for as long as
+     *  the current process stays alive. */
+    private fun reportCaughtException(tag: String, e: Throwable) {
+        val now = System.currentTimeMillis()
+        if (now - lastCaughtReportMs < 60_000L) return
+        lastCaughtReportMs = now
+        CrashLogger.writeCaughtReport(this, tag, e)
+    }
 
     private fun stepsPerSecond(speedKmh: Double) = (speedKmh * 1000.0 / 3600.0) / 0.75
 
@@ -206,6 +221,7 @@ class MockLocationService : Service() {
                     // One bad tick shouldn't kill the loop — log and keep holding rather than
                     // silently freezing the position until the user notices and restarts.
                     DebugLogger.log("Service", "hold tick 發生例外：$e")
+                    reportCaughtException("MockLocationService/hold", e)
                 }
             }
         }
@@ -223,6 +239,7 @@ class MockLocationService : Service() {
                 } catch (e: Throwable) {
                     DebugLogger.log("Service", "walk tick 發生例外：$e")
                     repo.setError("背景定位服務發生未預期的錯誤\n請重新開始偽造GPS")
+                    reportCaughtException("MockLocationService/walk", e)
                     false
                 }
                 if (shouldStop) return@launch

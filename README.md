@@ -30,7 +30,12 @@ PikoWalker 會假造手機的 GPS 位置，讓你可以在地圖上規劃一條�
    - 開發人員選項裡找到「**選取模擬位置應用程式**」，選 **PikoWalker**
    - 沒設定這項的話，按下「開始偽造GPS」會馬上又自動停止
 3. **電池最佳化** — 設定頁會顯示目前狀態，沒關閉的話會有紅色「去停用」按鈕，點下去照著系統畫面把 PikoWalker 排除在電池最佳化之外。沒做這步，走一走定位常常會自己飄回真實位置。
-4. **Health Connect（如果想同步步數）** — 手機需要先安裝 Health Connect，設定頁按「授予權限」允許 PikoWalker 寫入步數。
+4. **Health Connect → Google Fit → 皮克敏 Bloom（如果想同步步數）** — 步數要經過三層才會真的進遊戲，缺一層都不會動：
+   - 手機需要先安裝 **Health Connect**，PikoWalker 設定頁按「授予權限」，允許 PikoWalker 把模擬走路的步數**寫入** Health Connect
+   - 到 Health Connect 的設定裡（手機「設定」搜尋「Health Connect」），允許 **Google Fit** 從 Health Connect **讀取**步數——這步不是在 PikoWalker 裡做的，很容易漏掉
+   - 打開**皮克敏 Bloom** → 「設定」→「隱私權 & 步數」→「步數」，切換成「**使用 Google Fit 追蹤測量**」（遊戲預設是直接讀手機感測器，看不到 PikoWalker 寫進 Health Connect 的步數，一定要手動切過去）
+
+   （皮克敏 Bloom 跟 Google 帳號的步數同步本來就可能延遲幾小時，這是 Niantic 官方說明的正常現象，不代表哪裡設定錯了。）
 
 ## 怎麼用
 
@@ -82,8 +87,8 @@ PikoWalker 會假造手機的 GPS 位置，讓你可以在地圖上規劃一條�
 **打開 App 卡在讀取畫面，或閃退回桌面？**
 先完全關閉 App（從最近使用列表滑掉）再重新打開一次，通常會自動恢復。如果重開還是卡住，把手機重新開機通常能解決；常常發生的話麻煩照下面「回報問題」的方式回報。
 
-**Google Fit / Health Connect 步數沒有增加？**
-到手機「設定」搜尋「Health Connect」，確認 Google Fit 有被授權讀取步數——這個授權跟 PikoWalker 寫入步數的授權是分開的兩件事，兩邊都要開。
+**Google Fit / Health Connect 步數沒有增加，或皮克敏 Bloom 裡步數沒變？**
+照「開始使用前」第 4 項，確認三層都設定好了：PikoWalker 有寫入 Health Connect 的權限、Google Fit 有讀取 Health Connect 的權限、皮克敏 Bloom 的「步數」設定切成「使用 Google Fit 追蹤測量」。這是三個分開的授權/設定，缺一個步數都不會進遊戲；另外皮克敏 Bloom 跟 Google 帳號同步本來就可能延遲幾小時，是官方已知的正常現象，不用太快斷定是 PikoWalker 的問題。
 
 **回報問題**
 - 一般問題（例如定位飄走、步數沒同步）：「設定」→「除錯」→ 按「匯出並分享除錯紀錄」，把檔案傳給我（例如用 LINE），裡面會有定位模擬相關的事件記錄，方便排查。

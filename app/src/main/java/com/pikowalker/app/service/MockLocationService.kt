@@ -41,6 +41,8 @@ class MockLocationService : Service() {
         const val ACTION_STOP         = "com.pikowalker.app.STOP"
         private const val EXTRA_LAT = "lat"
         private const val EXTRA_LNG = "lng"
+        private const val WAKE_LOCK_TIMEOUT_MS = 6 * 60 * 60 * 1000L
+        private const val WAKE_LOCK_RENEW_INTERVAL_SEC = 30 * 60
 
         fun holdIntent(context: Context, lat: Double, lng: Double) =
             Intent(context, MockLocationService::class.java).apply {
@@ -215,6 +217,7 @@ class MockLocationService : Service() {
                     locationSimulator.keepAlive()
                     tick++
                     if (tick % 30 == 0) logDiagnosticSnapshot("hold")
+                    renewWakeLockIfNeeded(tick)
                 } catch (ce: kotlinx.coroutines.CancellationException) {
                     throw ce
                 } catch (e: Throwable) {
@@ -300,6 +303,7 @@ class MockLocationService : Service() {
         }
 
         if (elapsedSeconds % 30 == 0) logDiagnosticSnapshot("walk")
+        renewWakeLockIfNeeded(elapsedSeconds)
         return false
     }
 
@@ -383,10 +387,24 @@ class MockLocationService : Service() {
             .notify(NOTIF_ID, buildNotification(text))
     }
 
+    /** Timed acquire so a leaked wake lock can't drain the battery forever — but that means a
+     *  session running longer than this needs to actively renew it (see [renewWakeLockIfNeeded]),
+     *  or the device can slip into deep sleep mid-walk and the service gets killed by the OS. */
     private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
         val pm = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PikStep:WalkLock")
-        wakeLock?.acquire(6 * 60 * 60 * 1000L)
+        if (wakeLock == null) {
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PikStep:WalkLock").apply {
+                setReferenceCounted(false)
+            }
+        }
+        // Re-acquiring a timed lock that's already held resets its countdown, so calling this
+        // periodically from the loops is what actually extends the hold past WAKE_LOCK_TIMEOUT_MS.
+        wakeLock?.acquire(WAKE_LOCK_TIMEOUT_MS)
+    }
+
+    /** Called from the hold/walk loop ticks — renews well before [WAKE_LOCK_TIMEOUT_MS] would
+     *  lapse, so a walk left running for many hours never loses CPU-wake protection mid-session. */
+    private fun renewWakeLockIfNeeded(tickCount: Int) {
+        if (tickCount % WAKE_LOCK_RENEW_INTERVAL_SEC == 0) acquireWakeLock()
     }
 }

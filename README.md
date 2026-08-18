@@ -30,12 +30,30 @@ PikoWalker 會假造手機的 GPS 位置，讓你可以在地圖上規劃一條�
    - 開發人員選項裡找到「**選取模擬位置應用程式**」，選 **PikoWalker**
    - 沒設定這項的話，按下「開始偽造GPS」會馬上又自動停止
 3. **電池最佳化** — 設定頁會顯示目前狀態，沒關閉的話會有紅色「去停用」按鈕，點下去照著系統畫面把 PikoWalker 排除在電池最佳化之外。沒做這步，走一走定位常常會自己飄回真實位置。
-4. **Health Connect → Google Fit → 皮克敏 Bloom（如果想同步步數）** — 步數要經過三層才會真的進遊戲，缺一層都不會動：
-   - 手機需要先安裝 **Health Connect**，PikoWalker 設定頁按「授予權限」，允許 PikoWalker 把模擬走路的步數**寫入** Health Connect
-   - 到 Health Connect 的設定裡（手機「設定」搜尋「Health Connect」），允許 **Google Fit** 從 Health Connect **讀取**步數——這步不是在 PikoWalker 裡做的，很容易漏掉
-   - 打開**皮克敏 Bloom** → 「設定」→「隱私權 & 步數」→「步數」，切換成「**使用 Google Fit 追蹤測量**」（遊戲預設是直接讀手機感測器，看不到 PikoWalker 寫進 Health Connect 的步數，一定要手動切過去）
+4. **Health Connect → Google Fit → 皮克敏 Bloom（如果想同步步數）**
 
-   （皮克敏 Bloom 跟 Google 帳號的步數同步本來就可能延遲幾小時，這是 Niantic 官方說明的正常現象，不代表哪裡設定錯了。）
+   這一步比較繞，牽涉到三個不同的東西，缺一個都不會動。**如果只想在地圖上看角色移動、不在乎遊戲裡的步數會不會變，這一步可以整個跳過。**
+
+   **為什麼要繞這三層？**
+   PikoWalker 沒辦法直接把步數塞進皮克敏 Bloom 遊戲裡——皮克敏 Bloom 不認得 PikoWalker 這個 App，不會讓它直接寫資料進去。所以中間要透過 Android 系統裡一個叫「**Health Connect**」的中繼站：PikoWalker 先把模擬走路產生的步數寫進 Health Connect；接著 Google 自己的「**Google Fit**」App 會去 Health Connect 把這些步數讀出來，加進 Google 帳號的每日步數；最後皮克敏 Bloom 再去讀 Google Fit 的步數，顯示在遊戲裡。三段是三個獨立的授權，缺一段，步數就傳不到下一段。
+
+   **① 確認手機上有 Health Connect**
+   - Android 14（含）以後的手機，Health Connect 已經內建在系統裡，不用另外裝，直接看下一步。
+   - Android 13 或更舊的版本，要先到 Google Play 商店搜尋「Health Connect」安裝它（開發者是 Google LLC）。
+   - 不確定自己手機是哪個版本也沒關係，先跳到下一步操作；如果系統真的沒有 Health Connect，PikoWalker 設定頁會顯示無法使用，那時候再回來裝就好。
+
+   **② 讓 PikoWalker 可以把步數「寫進」Health Connect**
+   打開 PikoWalker →「**設定**」頁 →「Health Connect（步數同步）」區塊 → 按「**授予權限**」，手機會跳出 Health Connect 的授權畫面，把「寫入步數」打勾允許。做完後，PikoWalker 設定頁上「步數讀寫權限」會變成綠色「已授權」。
+
+   **③ 讓 Google Fit 可以從 Health Connect「讀出」步數**
+   這一步**不是在 PikoWalker 裡做**，最容易漏掉：打開手機系統的「**設定**」App（不是 PikoWalker 裡面的設定），在最上面的搜尋欄輸入「**Health Connect**」點進去，會看到目前有哪些 App 連結到它，找到 **Google Fit**，把它的「讀取步數」權限打開。做完這步，Google Fit 才會主動去 Health Connect 撈 PikoWalker 寫進去的步數。
+
+   **④ 讓皮克敏 Bloom 改成看 Google Fit 的步數**
+   打開**皮克敏 Bloom**遊戲本身 →「設定」→「隱私權 & 步數」→「步數」，會看到步數測量方式的選項。遊戲預設是「使用手機追蹤測量」（直接讀手機自己的計步感測器，完全看不到 PikoWalker 寫的資料），要手動切成「**使用 Google Fit 追蹤測量**」，遊戲才會改去讀 Google Fit 裡的步數。
+
+   四步都做完，資料流大致是：PikoWalker 走路產生步數 → 寫進 Health Connect → Google Fit 讀到、更新每日步數 → 皮克敏 Bloom 讀到 Google Fit 的數字、更新遊戲內步數。
+
+   **想馬上看到步數變化的話**：Google Fit 不是隨時都在背景同步，先自己打開 **Google Fit** App 看一下（讓它主動去跟 Health Connect 要一次最新資料），再打開皮克敏 Bloom，遊戲通常就能馬上讀到新的步數，不用乾等。
 
 ## 怎麼用
 
@@ -88,7 +106,7 @@ PikoWalker 會假造手機的 GPS 位置，讓你可以在地圖上規劃一條�
 先完全關閉 App（從最近使用列表滑掉）再重新打開一次，通常會自動恢復。如果重開還是卡住，把手機重新開機通常能解決；常常發生的話麻煩照下面「回報問題」的方式回報。
 
 **Google Fit / Health Connect 步數沒有增加，或皮克敏 Bloom 裡步數沒變？**
-照「開始使用前」第 4 項，確認三層都設定好了：PikoWalker 有寫入 Health Connect 的權限、Google Fit 有讀取 Health Connect 的權限、皮克敏 Bloom 的「步數」設定切成「使用 Google Fit 追蹤測量」。這是三個分開的授權/設定，缺一個步數都不會進遊戲；另外皮克敏 Bloom 跟 Google 帳號同步本來就可能延遲幾小時，是官方已知的正常現象，不用太快斷定是 PikoWalker 的問題。
+照「開始使用前」第 4 項，確認三層都設定好了：PikoWalker 有寫入 Health Connect 的權限、Google Fit 有讀取 Health Connect 的權限、皮克敏 Bloom 的「步數」設定切成「使用 Google Fit 追蹤測量」。這是三個分開的授權/設定，缺一個步數都不會進遊戲。三層都設定好但還是沒看到變化的話，先打開 Google Fit App 一次讓它跟 Health Connect 同步，再開皮克敏 Bloom。
 
 **回報問題**
 - 一般問題（例如定位飄走、步數沒同步）：「設定」→「除錯」→ 按「匯出並分享除錯紀錄」，把檔案傳給我（例如用 LINE），裡面會有定位模擬相關的事件記錄，方便排查。

@@ -11,7 +11,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -39,7 +38,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import java.io.File
 import com.pikowalker.app.BuildConfig
 import com.pikowalker.app.model.SavedRoute
 import com.pikowalker.app.model.ScheduleConfig
@@ -52,7 +50,6 @@ import com.pikowalker.app.update.UpdateChecker
 import com.pikowalker.app.update.ApkDownloader
 import com.pikowalker.app.update.UpdateUiState
 import com.pikowalker.app.viewmodel.WalkViewModel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -332,14 +329,14 @@ private fun DebugSectionContent() {
     val context = LocalContext.current
 
     Text(
-        "自動記錄最近 10 分鐘的執行紀錄，有問題可直接匯出分享",
+        "自動記錄最近 10 分鐘的執行紀錄，連同上次的當機／異常／沒有回應紀錄（如果有的話）一起匯出成一個檔案",
         fontSize = 12.sp, color = Color(0xFF757575), lineHeight = 16.sp,
         modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
     )
 
     OutlinedButton(
         onClick = {
-            val file = com.pikowalker.app.debug.DebugLogger.exportToFile(context)
+            val file = com.pikowalker.app.debug.DebugLogger.exportCombinedReport(context)
             val uri = androidx.core.content.FileProvider.getUriForFile(
                 context, "${context.packageName}.fileprovider", file
             )
@@ -354,73 +351,6 @@ private fun DebugSectionContent() {
         modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)
     ) {
         Text("匯出並分享除錯紀錄", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-    }
-
-    ReportShareRow(
-        initialReport = { com.pikowalker.app.debug.CrashLogger.latestReport(context) },
-        promptPrefix = "偵測到上次的當機紀錄",
-        shareSubject = "PikoWalker 當機紀錄",
-        shareChooserTitle = "分享當機紀錄",
-        buttonLabel = "分享上次的當機紀錄",
-        accentColor = Color(0xFFD32F2F)
-    )
-    ReportShareRow(
-        initialReport = { com.pikowalker.app.debug.CrashLogger.latestCaughtReport(context) },
-        promptPrefix = "偵測到上次自動恢復的異常事件（未實際當機）",
-        shareSubject = "PikoWalker 異常事件紀錄",
-        shareChooserTitle = "分享異常事件紀錄",
-        buttonLabel = "分享上次的異常事件紀錄",
-        accentColor = Color(0xFFEF6C00)
-    )
-}
-
-/** Shared UI for both the fatal-crash and caught-but-recovered report prompts — same
- *  detect/share/delayed-delete mechanics, different framing and accent color. */
-@Composable
-private fun ReportShareRow(
-    initialReport: () -> File?,
-    promptPrefix: String,
-    shareSubject: String,
-    shareChooserTitle: String,
-    buttonLabel: String,
-    accentColor: Color
-) {
-    val context = LocalContext.current
-    var report by remember { mutableStateOf(initialReport()) }
-    val scope = rememberCoroutineScope()
-    report?.let { file ->
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "$promptPrefix（${file.name}）",
-            fontSize = 11.sp, color = accentColor
-        )
-        OutlinedButton(
-            onClick = {
-                val uri = androidx.core.content.FileProvider.getUriForFile(
-                    context, "${context.packageName}.fileprovider", file
-                )
-                val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    putExtra(Intent.EXTRA_SUBJECT, shareSubject)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                context.startActivity(Intent.createChooser(intent, shareChooserTitle))
-                // Hide the prompt immediately, but delay the actual file deletion — the share
-                // sheet reads the FileProvider URI asynchronously after the user picks a target
-                // app, so deleting right away could race an app still streaming the content.
-                report = null
-                scope.launch {
-                    delay(10_000)
-                    com.pikowalker.app.debug.CrashLogger.deleteReport(file)
-                }
-            },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor),
-            border = BorderStroke(1.dp, accentColor)
-        ) {
-            Text(buttonLabel, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        }
     }
 }
 

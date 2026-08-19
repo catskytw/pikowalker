@@ -1,5 +1,7 @@
 package com.pikowalker.app.debug
 
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
 import com.pikowalker.app.BuildConfig
@@ -46,6 +48,42 @@ object CrashLogger {
         runCatching { writeReport(context, "caught", throwable, thread = null, tag = tag) }
     }
 
+    /** Call once at process startup. An ANR never runs any of PikoWalker's own code — the
+     *  system freezes then kills the process from outside — so [install] and [writeCaughtReport]
+     *  can never see one. [ActivityManager.getHistoricalProcessExitReasons] is the only way to
+     *  learn about it after the fact, and only from API 30 onward; older devices just never get
+     *  this report. */
+    fun checkForPreviousAnr(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        runCatching {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val anr = am.getHistoricalProcessExitReasons(null, 0, 5)
+                .firstOrNull { it.reason == ApplicationExitInfo.REASON_ANR } ?: return
+            writeAnrReport(context, anr)
+        }
+    }
+
+    private fun writeAnrReport(context: Context, info: ApplicationExitInfo) {
+        val dir = crashDir(context) ?: return
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(info.timestamp))
+        val file = File(dir, "anr_$stamp.txt")
+        if (file.exists()) return // already recorded this exact exit — avoid re-reporting every launch
+
+        val trace = runCatching { info.traceInputStream?.use { it.bufferedReader().readText() } }.getOrNull()
+
+        val report = buildString {
+            appendLine("PikoWalker 沒有回應紀錄（ANR，App 被系統強制關閉）")
+            appendLine("時間：${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.TAIWAN).format(Date(info.timestamp))}")
+            appendLine("版本：${BuildConfig.VERSION_NAME}")
+            appendLine("裝置：${Build.MANUFACTURER} ${Build.MODEL}（Android ${Build.VERSION.RELEASE}）")
+            appendLine("系統說明：${info.description}")
+            appendLine("---")
+            appendLine(trace ?: "（系統沒有保留這次的 ANR trace）")
+        }
+        runCatching { file.writeText(report) }
+        runCatching { pruneOldReports(dir) }
+    }
+
     private fun writeReport(context: Context, prefix: String, throwable: Throwable, thread: Thread?, tag: String? = null) {
         val dir = crashDir(context) ?: return
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
@@ -70,9 +108,9 @@ object CrashLogger {
         runCatching { pruneOldReports(dir) }
     }
 
-    /** Keeps only the most recent [MAX_REPORTS] total (fatal + caught combined) — this directory
-     *  lives in app-specific external storage and survives reinstalls, so without a cap it would
-     *  grow forever. */
+    /** Keeps only the most recent [MAX_REPORTS] total (fatal + caught + ANR combined) — this
+     *  directory lives in app-specific external storage and survives reinstalls, so without a
+     *  cap it would grow forever. */
     private fun pruneOldReports(dir: File) {
         val files = dir.listFiles() ?: return
         files.sortedByDescending { it.lastModified() }
@@ -94,6 +132,10 @@ object CrashLogger {
      *  since the app didn't actually crash for these. */
     fun latestCaughtReport(context: Context): File? =
         crashDir(context)?.listFiles()?.filter { it.name.startsWith("caught_") }?.maxByOrNull { it.lastModified() }
+
+    /** Most recent ANR report, if any — see [checkForPreviousAnr]. */
+    fun latestAnrReport(context: Context): File? =
+        crashDir(context)?.listFiles()?.filter { it.name.startsWith("anr_") }?.maxByOrNull { it.lastModified() }
 
     /** Called once the user has shared a report — deletes it so Settings stops showing a stale
      *  prompt for something already sent. */

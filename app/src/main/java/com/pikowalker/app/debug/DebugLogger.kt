@@ -57,28 +57,42 @@ object DebugLogger {
         else lines.joinToString("\n")
     }
 
-    /** Writes a snapshot of the last [minutes] to a shareable file in cache storage and returns
-     *  it, ready to hand to a share Intent via FileProvider. Older exports beyond
-     *  [MAX_EXPORTS] are deleted so repeated use doesn't quietly pile up files in cache. */
-    fun exportToFile(context: Context, minutes: Int = 10): File {
+    /** Recent in-memory entries as plain text — used to attach whatever context exists to a
+     *  crash report (see [com.pikowalker.app.debug.CrashLogger]). */
+    fun recentEntriesText(minutes: Int = 10): String = snapshotText(minutes)
+
+    /** Everything worth sharing in one file: the recent debug log, plus whatever crash/caught/
+     *  ANR reports [CrashLogger] currently has on disk — folded in and then deleted, so the user
+     *  has one button and one file instead of juggling several separate share prompts. */
+    fun exportCombinedReport(context: Context, minutes: Int = 10): File {
         val dir = File(context.cacheDir, "debug_logs").apply { mkdirs() }
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val file = File(dir, "pikowalker_debug_$stamp.txt")
-        val header = buildString {
+
+        val text = buildString {
             appendLine("PikoWalker 除錯紀錄")
             appendLine("版本：${BuildConfig.VERSION_NAME}")
             appendLine("裝置：${Build.MANUFACTURER} ${Build.MODEL}（Android ${Build.VERSION.RELEASE}）")
             appendLine("涵蓋範圍：最近 $minutes 分鐘")
             appendLine("---")
+            appendLine(snapshotText(minutes))
+
+            val extraReports = listOfNotNull(
+                CrashLogger.latestReport(context),
+                CrashLogger.latestCaughtReport(context),
+                CrashLogger.latestAnrReport(context)
+            )
+            extraReports.forEach { report ->
+                appendLine()
+                appendLine("=====================================")
+                appendLine(runCatching { report.readText() }.getOrDefault("（讀取 ${report.name} 失敗）"))
+            }
+            extraReports.forEach { CrashLogger.deleteReport(it) }
         }
-        file.writeText(header + snapshotText(minutes))
+        file.writeText(text)
         runCatching {
             dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(MAX_EXPORTS)?.forEach { it.delete() }
         }
         return file
     }
-
-    /** Recent in-memory entries as plain text — used to attach whatever context exists to a
-     *  crash report (see [com.pikowalker.app.debug.CrashLogger]). */
-    fun recentEntriesText(minutes: Int = 10): String = snapshotText(minutes)
 }

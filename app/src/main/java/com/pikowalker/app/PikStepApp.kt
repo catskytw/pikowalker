@@ -15,6 +15,7 @@ class PikStepApp : Application() {
     override fun onCreate() {
         super.onCreate()
         CrashLogger.install(this) // first — catches failures in every init line below too
+        CrashLogger.checkForPreviousAnr(this)
         clearStaleMockProviders()
         MapLibre.getInstance(this)
         AppSettings.init(this)

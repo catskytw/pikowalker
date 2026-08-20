@@ -50,6 +50,7 @@ import com.pikowalker.app.model.WalkState
 import com.pikowalker.app.model.WaypointLoopMode
 import com.pikowalker.app.ui.theme.*
 import com.pikowalker.app.viewmodel.WalkViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
@@ -102,19 +103,40 @@ fun MapScreen(viewModel: WalkViewModel) {
 
     val mapRef = remember { mutableStateOf<MapLibreMap?>(null) }
     val styleRef = remember { mutableStateOf<Style?>(null) }
-    val mapView = remember { MapView(context).also { it.onCreate(null) } }
+    var mapGeneration by remember { mutableIntStateOf(0) }
+    val mapView = remember(mapGeneration) { MapView(context).also { it.onCreate(null) } }
     var searchResult by remember { mutableStateOf<GeoPoint?>(null) }
     var searchCandidates by remember { mutableStateOf<List<Address>>(emptyList()) }
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    DisposableEffect(lifecycle) {
+    DisposableEffect(lifecycle, mapView) {
+        // MapLibre's native renderer has been observed to wedge permanently (the main thread
+        // stuck retrying a native mutex forever, never releasing) after the app sits backgrounded
+        // for a long stretch — a real deadlock in the renderer thread, not just a slow resume.
+        // Tearing the whole MapView down after a long-enough background stint and rebuilding it
+        // from scratch (via mapGeneration) sidesteps this: a fresh MapView means a fresh native
+        // renderer thread that never inherits whatever state wedged the old one.
+        var backgroundTeardownJob: kotlinx.coroutines.Job? = null
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> mapView.onStart()
+                Lifecycle.Event.ON_START -> {
+                    backgroundTeardownJob?.cancel()
+                    mapView.onStart()
+                }
                 Lifecycle.Event.ON_RESUME -> mapView.onResume()
                 Lifecycle.Event.ON_PAUSE -> mapView.onPause()
-                Lifecycle.Event.ON_STOP -> mapView.onStop()
+                Lifecycle.Event.ON_STOP -> {
+                    mapView.onStop()
+                    backgroundTeardownJob = scope.launch {
+                        delay(3 * 60_000L)
+                        styleRef.value = null
+                        mapRef.value = null
+                        mapView.onDestroy()
+                        mapGeneration++
+                    }
+                }
                 Lifecycle.Event.ON_DESTROY -> {
+                    backgroundTeardownJob?.cancel()
                     styleRef.value = null
                     mapRef.value = null
                     mapView.onDestroy()
@@ -123,7 +145,10 @@ fun MapScreen(viewModel: WalkViewModel) {
             }
         }
         lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer) }
+        onDispose {
+            backgroundTeardownJob?.cancel()
+            lifecycle.removeObserver(observer)
+        }
     }
 
     LaunchedEffect(mapView) {

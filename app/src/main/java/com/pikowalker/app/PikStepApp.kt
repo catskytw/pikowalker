@@ -4,6 +4,7 @@ import android.app.Application
 import android.location.LocationManager
 import android.os.Build
 import com.pikowalker.app.debug.CrashLogger
+import com.pikowalker.app.debug.MainThreadWatchdog
 import com.pikowalker.app.settings.AppSettings
 import org.maplibre.android.MapLibre
 
@@ -16,6 +17,7 @@ class PikStepApp : Application() {
         super.onCreate()
         CrashLogger.install(this) // first — catches failures in every init line below too
         CrashLogger.checkForPreviousAnr(this)
+        MainThreadWatchdog.start()
         clearStaleMockProviders()
         MapLibre.getInstance(this)
         AppSettings.init(this)

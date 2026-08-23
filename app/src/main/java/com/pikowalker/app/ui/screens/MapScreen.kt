@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -43,6 +44,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.pikowalker.app.geocoding.GeocodingRepository
+import com.pikowalker.app.settings.AppSettings
 import com.pikowalker.app.model.GeoPoint
 import com.pikowalker.app.model.SavedRoute
 import com.pikowalker.app.model.WalkSpeed
@@ -86,8 +88,6 @@ private const val USER_BEARING_ICON  = "pikowalker-bearing-icon"
 private const val STYLE_URI          = "asset://pikmin_style.json"
 private const val MAX_PINS           = 20
 
-private enum class SheetTab { PATH, SAVED }
-
 @SuppressLint("MissingPermission")
 @Composable
 fun MapScreen(viewModel: WalkViewModel) {
@@ -105,6 +105,7 @@ fun MapScreen(viewModel: WalkViewModel) {
     val mapView = remember { MapView(context).also { it.onCreate(null) } }
     var searchResult by remember { mutableStateOf<GeoPoint?>(null) }
     var searchCandidates by remember { mutableStateOf<List<Address>>(emptyList()) }
+    var showSavedRoutesDialog by remember { mutableStateOf(false) }
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
@@ -347,19 +348,40 @@ fun MapScreen(viewModel: WalkViewModel) {
                     .fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                MapSearchBar(
-                    geocodingRepo = geocodingRepo,
-                    scope = scope,
-                    onResult = { lat, lng ->
-                        mapRef.value?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(lat, lng), 16.0))
-                        searchResult = GeoPoint(lat, lng)
-                        searchCandidates = emptyList()
-                    },
-                    onMultipleResults = { candidates ->
-                        searchCandidates = candidates
-                        searchResult = null
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    MapSearchBar(
+                        geocodingRepo = geocodingRepo,
+                        scope = scope,
+                        onResult = { lat, lng ->
+                            mapRef.value?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(lat, lng), 16.0))
+                            searchResult = GeoPoint(lat, lng)
+                            searchCandidates = emptyList()
+                        },
+                        onMultipleResults = { candidates ->
+                            searchCandidates = candidates
+                            searchResult = null
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(19.dp),
+                        color = Color.White,
+                        shadowElevation = 3.dp,
+                        onClick = { showSavedRoutesDialog = true },
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.List, "已存路線",
+                                Modifier.size(17.dp), tint = ForestGreen
+                            )
+                        }
                     }
-                )
+                }
                 if (searchCandidates.isNotEmpty()) {
                     SearchCandidatesList(
                         candidates = searchCandidates,
@@ -457,12 +479,22 @@ fun MapScreen(viewModel: WalkViewModel) {
 
         SimulationBottomSheet(
             state = state,
-            savedRoutes = savedRoutes,
             lastSavedName = lastSavedName,
+            viewModel = viewModel
+        )
+    }
+
+    if (showSavedRoutesDialog) {
+        SavedRoutesDialog(
+            savedRoutes = savedRoutes,
+            isSimulating = state.isSimulating,
             onFlyTo = { lat, lng ->
                 mapRef.value?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(lat, lng), 16.0))
             },
-            viewModel = viewModel
+            onLoad = { viewModel.loadRoute(it); showSavedRoutesDialog = false },
+            onLoadAndWalk = { viewModel.loadRouteAndWalk(it); showSavedRoutesDialog = false },
+            onDelete = { viewModel.deleteRoute(it) },
+            onDismiss = { showSavedRoutesDialog = false }
         )
     }
 }
@@ -476,7 +508,8 @@ private fun MapSearchBar(
     geocodingRepo: GeocodingRepository,
     scope: kotlinx.coroutines.CoroutineScope,
     onResult: (Double, Double) -> Unit,
-    onMultipleResults: (List<Address>) -> Unit
+    onMultipleResults: (List<Address>) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var query by remember { mutableStateOf("") }
     var searching by remember { mutableStateOf(false) }
@@ -505,7 +538,7 @@ private fun MapSearchBar(
         shape = RoundedCornerShape(20.dp),
         color = Color.White,
         shadowElevation = 3.dp,
-        modifier = Modifier.fillMaxWidth().height(38.dp)
+        modifier = modifier.fillMaxWidth().height(38.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
@@ -682,13 +715,10 @@ private fun FakeGpsButton(
 @Composable
 private fun SimulationBottomSheet(
     state: WalkState,
-    savedRoutes: List<SavedRoute>,
     lastSavedName: String?,
-    onFlyTo: (Double, Double) -> Unit,
     viewModel: WalkViewModel
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    var tab by remember { mutableStateOf(SheetTab.PATH) }
 
     val headerLabel = when {
         state.isWalkingRoute -> "走路中 · ${"%,d".format(state.steps)} 步 · ${state.distanceKm} km"
@@ -730,35 +760,10 @@ private fun SimulationBottomSheet(
                     if (state.isWalkingRoute) {
                         WalkingSheetContent(state, viewModel)
                     } else {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            SheetTabPill("目前路徑", tab == SheetTab.PATH, Modifier.weight(1f)) { tab = SheetTab.PATH }
-                            SheetTabPill("已存路線", tab == SheetTab.SAVED, Modifier.weight(1f)) { tab = SheetTab.SAVED }
-                        }
-                        when (tab) {
-                            SheetTab.PATH -> PathTabContent(state, viewModel)
-                            SheetTab.SAVED -> SavedTabContent(savedRoutes, lastSavedName, state.isSimulating, onFlyTo, viewModel)
-                        }
+                        PathTabContent(state, viewModel, lastSavedName)
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun SheetTabPill(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
-        color = if (selected) ForestGreen.copy(0.12f) else Color(0xFFF2F2F2),
-        onClick = onClick
-    ) {
-        Box(Modifier.fillMaxWidth().padding(vertical = 6.dp), contentAlignment = Alignment.Center) {
-            Text(
-                label, fontSize = 11.sp,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (selected) ForestGreen else Color(0xFF888888)
-            )
         }
     }
 }
@@ -777,6 +782,7 @@ private fun WalkingSheetContent(state: WalkState, viewModel: WalkViewModel) {
         SectionLabel("步數上限(步)（可即時調整）")
         StepLimitPickerRow(state, viewModel)
     }
+    WriteStepsToggleRow(state, liveHint = true)
     Button(
         onClick = { viewModel.stopWalkingRoute() },
         modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
@@ -817,6 +823,40 @@ private fun SpeedPickerRow(state: WalkState, viewModel: WalkViewModel) {
     }
 }
 
+/** Surfaced here too (not just in Settings) so starting or adjusting a walk and deciding
+ *  whether it writes steps happen in the same place — previously this lived only in Settings,
+ *  a different top-level screen entirely, disconnected from the route-starting flow. Shares
+ *  [AppSettings.writeStepsEnabledFlow] with the Settings copy so either one stays in sync. */
+@Composable
+private fun WriteStepsToggleRow(state: WalkState, liveHint: Boolean) {
+    if (!state.healthConnectAvailable) return
+    val context = LocalContext.current
+    val enabled by AppSettings.writeStepsEnabledFlow.collectAsState()
+    val hcPermitted = state.hasHealthPermission
+    val grayed = Color(0xFFBDBDBD)
+
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                if (liveHint) "寫入步數（可即時調整）" else "寫入步數",
+                fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                color = if (hcPermitted) Color(0xFF1A1A1A) else grayed
+            )
+            Text(
+                if (hcPermitted) "關閉後只移動GPS位置，步數不會寫入 Health Connect"
+                else "需先到設定頁授予步數讀寫權限",
+                fontSize = 10.sp, color = if (hcPermitted) Color(0xFF999999) else grayed, lineHeight = 13.sp
+            )
+        }
+        Switch(
+            checked = enabled && hcPermitted,
+            onCheckedChange = { AppSettings.setWriteStepsEnabled(context, it) },
+            enabled = hcPermitted,
+            colors = SwitchDefaults.colors(checkedTrackColor = ForestGreen)
+        )
+    }
+}
+
 private val STEP_LIMIT_PRESETS = listOf(1000L, 2000L, 5000L, 0L)
 
 @Composable
@@ -847,10 +887,26 @@ private fun StepLimitPickerRow(state: WalkState, viewModel: WalkViewModel) {
 }
 
 @Composable
-private fun PathTabContent(state: WalkState, viewModel: WalkViewModel) {
+private fun PathTabContent(
+    state: WalkState,
+    viewModel: WalkViewModel,
+    lastSavedName: String?
+) {
     val waypoints = state.waypoints
     var showSaveDialog by remember { mutableStateOf(false) }
     var saveName by remember { mutableStateOf("") }
+
+    if (lastSavedName != null) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(7.dp))
+                .background(ForestGreen.copy(0.1f)).padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Text("✓", fontSize = 13.sp, color = ForestGreen)
+            Text("「$lastSavedName」已儲存", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = ForestGreenDark)
+        }
+    }
 
     if (showSaveDialog) {
         AlertDialog(
@@ -900,6 +956,8 @@ private fun PathTabContent(state: WalkState, viewModel: WalkViewModel) {
         SectionLabel("步數上限(步)")
         StepLimitPickerRow(state, viewModel)
     }
+
+    WriteStepsToggleRow(state, liveHint = false)
 
     if (waypoints.size >= 2) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -961,8 +1019,6 @@ private fun PathTabContent(state: WalkState, viewModel: WalkViewModel) {
         if (!state.isSimulating) {
             Text("請先按地圖下方「開始偽造GPS」", fontSize = 10.sp, color = Color(0xFFAAAAAA))
         }
-    } else {
-        Text("再點地圖增加更多點以建立路徑", fontSize = 10.sp, color = Color(0xFFAAAAAA))
     }
 
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1051,51 +1107,50 @@ private fun CustomStepLimitDialog(currentLimit: Long, onConfirm: (Long) -> Unit,
     )
 }
 
+/** Opened from the 已存路線 button in [PathTabContent] rather than living as a permanent second
+ *  panel — the route list is something you dip into to pick or manage a route, not something
+ *  that needs to stay visible alongside the path you're actively editing. */
 @Composable
-private fun SavedTabContent(
+private fun SavedRoutesDialog(
     savedRoutes: List<SavedRoute>,
-    lastSavedName: String?,
     isSimulating: Boolean,
     onFlyTo: (Double, Double) -> Unit,
-    viewModel: WalkViewModel
+    onLoad: (SavedRoute) -> Unit,
+    onLoadAndWalk: (SavedRoute) -> Unit,
+    onDelete: (String) -> Unit,
+    onDismiss: () -> Unit
 ) {
-    if (lastSavedName != null) {
-        Row(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(7.dp))
-                .background(ForestGreen.copy(0.1f)).padding(horizontal = 10.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp)
-        ) {
-            Text("✓", fontSize = 13.sp, color = ForestGreen)
-            Text("「$lastSavedName」已儲存", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = ForestGreenDark)
-        }
-    }
-
-    if (savedRoutes.isEmpty()) {
-        Text("尚無已存的位置或路線", fontSize = 12.sp, color = StoneGray)
-        return
-    }
-
-    Column(
-        modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        savedRoutes.forEach { route ->
-            SavedRouteCard(
-                route = route,
-                isSimulating = isSimulating,
-                onLoad = {
-                    viewModel.loadRoute(route)
-                    route.waypoints.firstOrNull()?.let { onFlyTo(it.lat, it.lng) }
-                },
-                onLoadAndWalk = {
-                    viewModel.loadRouteAndWalk(route)
-                    route.waypoints.firstOrNull()?.let { onFlyTo(it.lat, it.lng) }
-                },
-                onDelete = { viewModel.deleteRoute(route.id) }
-            )
-        }
-    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("已存路線", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
+        text = {
+            if (savedRoutes.isEmpty()) {
+                Text("尚無已存的位置或路線", fontSize = 12.sp, color = StoneGray)
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 380.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    savedRoutes.forEach { route ->
+                        SavedRouteCard(
+                            route = route,
+                            isSimulating = isSimulating,
+                            onLoad = {
+                                onLoad(route)
+                                route.waypoints.firstOrNull()?.let { onFlyTo(it.lat, it.lng) }
+                            },
+                            onLoadAndWalk = {
+                                onLoadAndWalk(route)
+                                route.waypoints.firstOrNull()?.let { onFlyTo(it.lat, it.lng) }
+                            },
+                            onDelete = { onDelete(route.id) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("關閉") } }
+    )
 }
 
 // ── Shared small composables ──────────────────────────────────────────────────

@@ -1187,6 +1187,7 @@ private fun SavedRoutesDialog(
 ) {
     var pasteText by remember { mutableStateOf("") }
     var pasteError by remember { mutableStateOf(false) }
+    var showImportSection by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1196,35 +1197,52 @@ private fun SavedRoutesDialog(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("收到朋友分享的路線？", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                OutlinedTextField(
-                    value = pasteText,
-                    onValueChange = { pasteText = it; pasteError = false },
-                    placeholder = { Text("在這裡貼上朋友傳給你的整段訊息", fontSize = 12.sp) },
-                    minLines = 2,
-                    maxLines = 4,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ForestGreen, cursorColor = ForestGreen),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (pasteError) {
-                    Text("看起來不是有效的路線代碼", fontSize = 11.sp, color = EarthRed)
+                // Collapsed by default — importing a shared route is occasional, not something
+                // that should compete for space with the route list every time this dialog opens.
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable { showImportSection = !showImportSection },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "收到朋友分享的路線？", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        if (showImportSection) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
+                        null, Modifier.size(18.dp)
+                    )
                 }
-                Button(
-                    onClick = {
-                        val route = RouteShareCodec.decode(pasteText)
-                        if (route != null) {
-                            onImportRoute(route)
-                            pasteText = ""
-                        } else {
-                            pasteError = true
-                        }
-                    },
-                    enabled = pasteText.isNotBlank(),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = ForestGreen, contentColor = Color.White),
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)
-                ) { Text("匯入路線", fontWeight = FontWeight.SemiBold) }
+                if (showImportSection) {
+                    OutlinedTextField(
+                        value = pasteText,
+                        onValueChange = { pasteText = it; pasteError = false },
+                        placeholder = { Text("在這裡貼上朋友傳給你的整段訊息", fontSize = 12.sp) },
+                        minLines = 2,
+                        maxLines = 4,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ForestGreen, cursorColor = ForestGreen),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (pasteError) {
+                        Text("看起來不是有效的路線代碼", fontSize = 11.sp, color = EarthRed)
+                    }
+                    Button(
+                        onClick = {
+                            val route = RouteShareCodec.decode(pasteText)
+                            if (route != null) {
+                                onImportRoute(route)
+                                pasteText = ""
+                                showImportSection = false
+                            } else {
+                                pasteError = true
+                            }
+                        },
+                        enabled = pasteText.isNotBlank(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = ForestGreen, contentColor = Color.White),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)
+                    ) { Text("匯入路線", fontWeight = FontWeight.SemiBold) }
+                }
 
                 if (savedRoutes.isEmpty()) {
                     Text("尚無已存的位置或路線", fontSize = 12.sp, color = StoneGray)

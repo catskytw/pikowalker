@@ -1,6 +1,7 @@
 package com.pikowalker.app.ui.screens
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.location.Address
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
@@ -16,7 +17,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -44,6 +44,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.pikowalker.app.geocoding.GeocodingRepository
+import com.pikowalker.app.RouteShareCodec
 import com.pikowalker.app.settings.AppSettings
 import com.pikowalker.app.model.GeoPoint
 import com.pikowalker.app.model.SavedRoute
@@ -96,6 +97,7 @@ fun MapScreen(viewModel: WalkViewModel) {
     val lastSavedName by viewModel.lastSavedName.collectAsState()
     val pendingDeepLinkPoint by viewModel.pendingDeepLinkPoint.collectAsState()
     val resolvingSharedLink by viewModel.resolvingSharedLink.collectAsState()
+    val pendingImportRoute by viewModel.pendingImportRoute.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val geocodingRepo = remember { GeocodingRepository(context) }
@@ -376,8 +378,8 @@ fun MapScreen(viewModel: WalkViewModel) {
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                Icons.AutoMirrored.Filled.List, "已存路線",
-                                Modifier.size(17.dp), tint = ForestGreen
+                                Icons.Default.Bookmarks, "已存路線",
+                                Modifier.size(18.dp), tint = ForestGreen
                             )
                         }
                     }
@@ -429,6 +431,34 @@ fun MapScreen(viewModel: WalkViewModel) {
                             fontSize = 11.sp, color = Color.White,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                         )
+                    }
+                }
+                pendingImportRoute?.let { route ->
+                    Surface(shape = RoundedCornerShape(12.dp), color = ForestGreen.copy(alpha = 0.92f)) {
+                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                            val subtitle = if (route.waypoints.size == 1) "單點定位"
+                                else "${route.waypoints.size} 個路標 · ${route.loopMode.label}"
+                            Text("偵測到分享的路線「${route.name}」", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                            Text(subtitle, fontSize = 10.sp, color = Color.White.copy(alpha = 0.85f))
+                            Spacer(Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Button(
+                                    onClick = { viewModel.confirmImportRoute() },
+                                    modifier = Modifier.heightIn(min = 28.dp),
+                                    shape = RoundedCornerShape(7.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = ForestGreenDark),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                                ) { Text("匯入", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
+                                OutlinedButton(
+                                    onClick = { viewModel.dismissImportRoute() },
+                                    modifier = Modifier.heightIn(min = 28.dp),
+                                    shape = RoundedCornerShape(7.dp),
+                                    border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.6f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                                ) { Text("取消", fontSize = 11.sp) }
+                            }
+                        }
                     }
                 }
             }
@@ -493,6 +523,17 @@ fun MapScreen(viewModel: WalkViewModel) {
             },
             onLoad = { viewModel.loadRoute(it); showSavedRoutesDialog = false },
             onLoadAndWalk = { viewModel.loadRouteAndWalk(it); showSavedRoutesDialog = false },
+            onShare = { route ->
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, RouteShareCodec.shareText(route))
+                }
+                context.startActivity(Intent.createChooser(intent, "分享路線"))
+            },
+            onImportRoute = { route ->
+                viewModel.setPendingImportRoute(route)
+                showSavedRoutesDialog = false
+            },
             onDelete = { viewModel.deleteRoute(it) },
             onDismiss = { showSavedRoutesDialog = false }
         )
@@ -911,17 +952,38 @@ private fun PathTabContent(
     if (showSaveDialog) {
         AlertDialog(
             onDismissRequest = { showSaveDialog = false },
-            title = { Text("儲存位置", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
+            shape = RoundedCornerShape(16.dp),
+            icon = {
+                Box(
+                    modifier = Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.BookmarkAdd, null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            },
+            title = { Text("儲存路線", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     val subtitle = if (waypoints.size == 1) "單點定位"
                         else "${waypoints.size} 個路標點 · ${state.waypointLoopMode.label}"
-                    Text(subtitle, fontSize = 12.sp, color = StoneGray)
+                    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                        Text(
+                            subtitle, fontSize = 11.sp, fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
                     OutlinedTextField(
                         value = saveName,
                         onValueChange = { saveName = it },
                         label = { Text("名稱") },
                         singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ForestGreen, cursorColor = ForestGreen),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -929,8 +991,9 @@ private fun PathTabContent(
             confirmButton = {
                 Button(
                     onClick = { viewModel.saveRoute(saveName); showSaveDialog = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = ForestGreen)
-                ) { Text("儲存") }
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = ForestGreen, contentColor = Color.White)
+                ) { Text("儲存", fontWeight = FontWeight.SemiBold) }
             },
             dismissButton = { TextButton(onClick = { showSaveDialog = false }) { Text("取消") } }
         )
@@ -1117,20 +1180,55 @@ private fun SavedRoutesDialog(
     onFlyTo: (Double, Double) -> Unit,
     onLoad: (SavedRoute) -> Unit,
     onLoadAndWalk: (SavedRoute) -> Unit,
+    onShare: (SavedRoute) -> Unit,
+    onImportRoute: (SavedRoute) -> Unit,
     onDelete: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    var pasteText by remember { mutableStateOf("") }
+    var pasteError by remember { mutableStateOf(false) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("已存路線", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
         text = {
-            if (savedRoutes.isEmpty()) {
-                Text("尚無已存的位置或路線", fontSize = 12.sp, color = StoneGray)
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 380.dp).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text("收到朋友分享的路線？", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                OutlinedTextField(
+                    value = pasteText,
+                    onValueChange = { pasteText = it; pasteError = false },
+                    placeholder = { Text("在這裡貼上朋友傳給你的整段訊息", fontSize = 12.sp) },
+                    minLines = 2,
+                    maxLines = 4,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ForestGreen, cursorColor = ForestGreen),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (pasteError) {
+                    Text("看起來不是有效的路線代碼", fontSize = 11.sp, color = EarthRed)
+                }
+                Button(
+                    onClick = {
+                        val route = RouteShareCodec.decode(pasteText)
+                        if (route != null) {
+                            onImportRoute(route)
+                            pasteText = ""
+                        } else {
+                            pasteError = true
+                        }
+                    },
+                    enabled = pasteText.isNotBlank(),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = ForestGreen, contentColor = Color.White),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)
+                ) { Text("匯入路線", fontWeight = FontWeight.SemiBold) }
+
+                if (savedRoutes.isEmpty()) {
+                    Text("尚無已存的位置或路線", fontSize = 12.sp, color = StoneGray)
+                } else {
                     savedRoutes.forEach { route ->
                         SavedRouteCard(
                             route = route,
@@ -1143,6 +1241,7 @@ private fun SavedRoutesDialog(
                                 onLoadAndWalk(route)
                                 route.waypoints.firstOrNull()?.let { onFlyTo(it.lat, it.lng) }
                             },
+                            onShare = { onShare(route) },
                             onDelete = { onDelete(route.id) }
                         )
                     }
@@ -1274,6 +1373,7 @@ private fun SavedRouteCard(
     isSimulating: Boolean,
     onLoad: () -> Unit,
     onLoadAndWalk: () -> Unit,
+    onShare: () -> Unit,
     onDelete: () -> Unit
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -1316,27 +1416,41 @@ private fun SavedRouteCard(
                 ) {
                     val label = when {
                         !isSimulating -> "載入路徑"
-                        route.waypoints.size >= 2 -> "▶ 載入並走路"
-                        else -> "▶ 載入並定位"
+                        route.waypoints.size >= 2 -> "▶ 走這條"
+                        else -> "▶ 去這裡"
                     }
-                    Text(label, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
+                    Text(label, fontSize = 9.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                }
+                // Only shown once GPS faking is on — before that, loadRouteAndWalk's "and walk"
+                // half silently no-ops (see WalkViewModel.startWalkingRoute/holdAt), so this
+                // button would be functionally identical to the primary one above and just
+                // confusing to have twice.
+                if (isSimulating) {
+                    OutlinedButton(
+                        onClick = onLoad,
+                        modifier = Modifier.heightIn(min = 26.dp),
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(0.5.dp, Color(0xFFDDDDDD)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF777777)),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) { Text("載入", fontSize = 9.sp, maxLines = 1) }
                 }
                 OutlinedButton(
-                    onClick = onLoad,
+                    onClick = onShare,
                     modifier = Modifier.heightIn(min = 26.dp),
                     shape = RoundedCornerShape(6.dp),
                     border = BorderStroke(0.5.dp, Color(0xFFDDDDDD)),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF777777)),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                ) { Text("載入", fontSize = 9.sp) }
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                ) { Icon(Icons.Default.Share, "分享", Modifier.size(12.dp)) }
                 OutlinedButton(
                     onClick = { showDeleteConfirm = true },
                     modifier = Modifier.heightIn(min = 26.dp),
                     shape = RoundedCornerShape(6.dp),
                     border = BorderStroke(0.5.dp, Color(0xFFF5B5B5)),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFC0392B)),
-                    contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp)
-                ) { Text("✕", fontSize = 9.sp) }
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                ) { Icon(Icons.Default.DeleteOutline, "刪除", Modifier.size(13.dp)) }
             }
         }
     }

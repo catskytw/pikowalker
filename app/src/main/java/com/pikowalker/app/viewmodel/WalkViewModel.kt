@@ -58,6 +58,25 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
         _pendingDeepLinkPoint.value = null
     }
 
+    /** A route someone shared with us (see [com.pikowalker.app.RouteShareCodec]), waiting on
+     *  confirmation before it's actually added to [savedRoutes] — arriving here never saves it
+     *  on its own, same spirit as [pendingDeepLinkPoint]. */
+    private val _pendingImportRoute = MutableStateFlow<SavedRoute?>(null)
+    val pendingImportRoute: StateFlow<SavedRoute?> = _pendingImportRoute.asStateFlow()
+
+    fun setPendingImportRoute(route: SavedRoute) {
+        _pendingImportRoute.value = route
+    }
+
+    fun confirmImportRoute() {
+        _pendingImportRoute.value?.let { routeRepo.save(it) }
+        _pendingImportRoute.value = null
+    }
+
+    fun dismissImportRoute() {
+        _pendingImportRoute.value = null
+    }
+
     /** True while a shared Google Maps short link (goo.gl/maps.app.goo.gl) is being resolved —
      *  that redirect chain can take a few retries, so the map shows a "解析連結中" banner
      *  instead of looking like it silently ignored the share. */

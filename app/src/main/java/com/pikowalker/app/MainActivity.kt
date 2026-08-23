@@ -182,6 +182,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handleSharedText(text: String?) {
         if (text.isNullOrBlank()) return
+        RouteShareCodec.decode(text)?.let { route -> viewModel.setPendingImportRoute(route); return }
         parseCoordsFromText(text)?.let { (lat, lng) -> viewModel.setDeepLinkPoint(lat, lng); return }
 
         // Shortened links (goo.gl/maps, maps.app.goo.gl) don't carry visible coordinates —

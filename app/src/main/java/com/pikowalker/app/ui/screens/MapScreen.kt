@@ -843,7 +843,7 @@ private fun WriteStepsToggleRow(state: WalkState, liveHint: Boolean) {
                 color = if (hcPermitted) Color(0xFF1A1A1A) else grayed
             )
             Text(
-                if (hcPermitted) "關閉後只移動GPS位置，步數不會寫入 Health Connect"
+                if (hcPermitted) "若不寫入，只會變更GPS，沒有步數"
                 else "需先到設定頁授予步數讀寫權限",
                 fontSize = 10.sp, color = if (hcPermitted) Color(0xFF999999) else grayed, lineHeight = 13.sp
             )

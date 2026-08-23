@@ -34,7 +34,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = buildNumber
-        versionName = "1.0.$buildNumber"
+        versionName = "1.1.$buildNumber"
 
         buildConfigField("String", "GITHUB_UPDATE_TOKEN", "\"$githubUpdateToken\"")
         buildConfigField("String", "GITHUB_OWNER", "\"catskytw\"")

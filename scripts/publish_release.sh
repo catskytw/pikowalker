@@ -13,7 +13,8 @@ REPO="catskytw/pikowalker"
 ./gradlew clean assembleDebug
 
 BUILD_NUMBER=$(grep buildNumber app/version.properties | cut -d= -f2)
-VERSION="1.0.$BUILD_NUMBER"
+VERSION_PREFIX=$(sed -n 's/.*versionName = "\([0-9]*\.[0-9]*\)\.\$buildNumber".*/\1/p' app/build.gradle.kts)
+VERSION="$VERSION_PREFIX.$BUILD_NUMBER"
 APK_SRC="app/build/outputs/apk/debug/app-debug.apk"
 APK_DEST="app/build/outputs/apk/debug/pikowalker-$VERSION.apk"
 

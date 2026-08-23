@@ -20,6 +20,7 @@ import androidx.core.content.ContextCompat
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.lifecycleScope
+import com.pikowalker.app.debug.DebugLogger
 import com.pikowalker.app.health.HealthConnectHelper
 import com.pikowalker.app.ui.navigation.PikoWalkerNavGraph
 import com.pikowalker.app.ui.theme.PikoWalkerTheme
@@ -64,6 +65,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DebugLogger.log("Activity", "onCreate savedInstanceState=${savedInstanceState != null} task=${taskId}")
         checkPermissions()
         checkHealthConnect()
         handleIncomingIntent(intent)
@@ -88,6 +90,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         val since = backgroundedAt
         backgroundedAt = null
+        val backgroundedMs = since?.let { System.currentTimeMillis() - it }
         // MapLibre's native renderer has been observed to wedge permanently — the main thread
         // stuck forever inside MapRenderer::update()'s native mutex, confirmed live via repeated
         // thread dumps — after the app sits backgrounded for a long stretch. Recreating the whole
@@ -95,7 +98,9 @@ class MainActivity : ComponentActivity() {
         // rather than trying to hand-roll tearing down and rebuilding just the MapView inside a
         // live composition, which turned out to have its own Compose/AndroidView lifecycle edge
         // cases (stale factory reuse, zero-sized SurfaceView on rebuild).
-        if (since != null && System.currentTimeMillis() - since > REBUILD_AFTER_BACKGROUND_MS) {
+        val willRecreate = backgroundedMs != null && backgroundedMs > REBUILD_AFTER_BACKGROUND_MS
+        DebugLogger.log("Activity", "onStart backgroundedMs=$backgroundedMs willRecreate=$willRecreate")
+        if (willRecreate) {
             recreate()
         }
     }
@@ -103,10 +108,12 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         backgroundedAt = System.currentTimeMillis()
+        DebugLogger.log("Activity", "onStop isFinishing=$isFinishing isChangingConfigurations=$isChangingConfigurations")
     }
 
     override fun onResume() {
         super.onResume()
+        DebugLogger.log("Activity", "onResume")
         checkHealthConnect()
     }
 

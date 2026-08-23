@@ -489,9 +489,8 @@ fun MapScreen(viewModel: WalkViewModel) {
                     } else {
                         getLastKnownLocation(context)?.let { loc -> viewModel.startSimulatingAt(loc.latitude, loc.longitude); true } ?: false
                     }
-                    if (started) {
-                        android.widget.Toast.makeText(context, "正在偽造GPS", android.widget.Toast.LENGTH_SHORT).show()
-                    }
+                    val message = if (started) "正在偽造GPS" else "請先點地圖選一個點位，或到「已存路線」載入一條路線"
+                    android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
                 },
                 onStop = { viewModel.stopSimulation() }
             )
@@ -898,7 +897,7 @@ private fun WriteStepsToggleRow(state: WalkState, liveHint: Boolean) {
     }
 }
 
-private val STEP_LIMIT_PRESETS = listOf(1000L, 2000L, 5000L, 0L)
+private val STEP_LIMIT_PRESETS = listOf(1000L, 3000L, 5000L, 10000L, 0L)
 
 @Composable
 private fun StepLimitPickerRow(state: WalkState, viewModel: WalkViewModel) {
@@ -910,20 +909,33 @@ private fun StepLimitPickerRow(state: WalkState, viewModel: WalkViewModel) {
             onDismiss = { showLimitDialog = false }
         )
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        STEP_LIMIT_PRESETS.forEach { limit ->
-            ModePill(
-                label = if (limit == 0L) "無上限" else "$limit",
-                selected = state.stepLimit == limit,
-                modifier = Modifier.weight(1f)
-            ) { viewModel.setStepLimit(limit) }
+    val isCustom = STEP_LIMIT_PRESETS.none { it == state.stepLimit }
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        // Split 5 presets + 自訂 across two rows (3 + 3) instead of squeezing all 6 into one —
+        // one row of this many pills reads as a cramped wall of tiny text.
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            STEP_LIMIT_PRESETS.take(3).forEach { limit ->
+                ModePill(
+                    label = if (limit == 0L) "無上限" else "$limit",
+                    selected = state.stepLimit == limit,
+                    modifier = Modifier.weight(1f)
+                ) { viewModel.setStepLimit(limit) }
+            }
         }
-        val isCustom = STEP_LIMIT_PRESETS.none { it == state.stepLimit }
-        ModePill(
-            label = if (isCustom) "自訂 ${state.stepLimit}" else "自訂",
-            selected = isCustom,
-            modifier = Modifier.weight(1f)
-        ) { showLimitDialog = true }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            STEP_LIMIT_PRESETS.drop(3).forEach { limit ->
+                ModePill(
+                    label = if (limit == 0L) "無上限" else "$limit",
+                    selected = state.stepLimit == limit,
+                    modifier = Modifier.weight(1f)
+                ) { viewModel.setStepLimit(limit) }
+            }
+            ModePill(
+                label = if (isCustom) "自訂 ${state.stepLimit}" else "自訂",
+                selected = isCustom,
+                modifier = Modifier.weight(1f)
+            ) { showLimitDialog = true }
+        }
     }
 }
 

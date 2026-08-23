@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity() {
         checkPermissions()
         checkHealthConnect()
         handleIncomingIntent(intent)
+        clearIntentData()
         setContent {
             PikoWalkerTheme {
                 if (permissionsGranted) {
@@ -113,6 +114,16 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIncomingIntent(intent)
+        clearIntentData()
+    }
+
+    /** getIntent() otherwise keeps returning whatever ACTION_VIEW/ACTION_SEND intent last
+     *  started or was delivered to this Activity — including on every future onCreate() from a
+     *  recreate() (see onStart() above) or a system-restored task — so once it's been handled,
+     *  replace it with an inert one or it gets silently reprocessed forever, re-showing the
+     *  設為模擬點 prompt for a link the user already dealt with. */
+    private fun clearIntentData() {
+        setIntent(Intent(this, MainActivity::class.java))
     }
 
     /** Two ways another app can hand us a location:

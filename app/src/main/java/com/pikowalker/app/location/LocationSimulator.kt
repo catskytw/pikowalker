@@ -14,6 +14,13 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 
+/** Called from two different threads: [com.pikowalker.app.service.MockLocationService]'s
+ *  onStartCommand (main thread — start/stop/teleport/setWaypoints) and its hold/walk loop
+ *  (Dispatchers.Default — tick/keepAlive). loopJob.cancel() before dispatching a main-thread
+ *  call is cooperative, not immediate, so the two can genuinely overlap (observed for real when
+ *  STOP_ROUTE is quickly followed by START_ROUTE). The public entry points below are
+ *  [Synchronized] on that basis — Kotlin's monitor lock is reentrant, so calls between them
+ *  (e.g. tick() calling pushLocation()) don't self-deadlock. */
 class LocationSimulator(private val context: Context) {
 
     private val locationManager =
@@ -27,9 +34,12 @@ class LocationSimulator(private val context: Context) {
     private var wpLat = 25.0330
     private var wpLng = 121.5654
 
-    var currentLat: Double = wpLat; private set
-    var currentLng: Double = wpLng; private set
-    var currentBearing: Float = 0f; private set
+    // Read from MockLocationService's loop thread right after tick()/keepAlive() write them —
+    // @Volatile makes that plain, unsynchronized read safe without pulling the reader into the
+    // same lock these mutating methods use (see the class doc below).
+    @Volatile var currentLat: Double = wpLat; private set
+    @Volatile var currentLng: Double = wpLng; private set
+    @Volatile var currentBearing: Float = 0f; private set
 
     private var gpsProviderAdded = false
     private var networkProviderAdded = false
@@ -44,11 +54,13 @@ class LocationSimulator(private val context: Context) {
 
     private val rng = Random(System.nanoTime())
 
+    @Synchronized
     fun setCenter(lat: Double, lng: Double) {
         wpLat = lat; wpLng = lng
         currentLat = lat; currentLng = lng
     }
 
+    @Synchronized
     fun teleport(lat: Double, lng: Double) {
         setCenter(lat, lng)
         if (gpsProviderAdded) pushLocation(lat, lng, 0f)
@@ -57,12 +69,14 @@ class LocationSimulator(private val context: Context) {
     /** Re-push the current position, keeping the mock fix fresh while idle. Deliberately no
      *  jitter here — unlike active walking (where movement masks it), a stationary hold with
      *  random noise reads as the position drifting and snapping back. */
+    @Synchronized
     fun keepAlive() {
         if (gpsProviderAdded) {
             pushLocation(wpLat, wpLng, 0f)
         }
     }
 
+    @Synchronized
     fun setWaypoints(wps: List<Pair<Double, Double>>) {
         wpList = wps
         wpIndex = 0
@@ -74,6 +88,7 @@ class LocationSimulator(private val context: Context) {
         }
     }
 
+    @Synchronized
     @SuppressLint("MissingPermission")
     fun start(): Boolean {
         val gpsOk = reRegisterGpsProvider()
@@ -151,33 +166,39 @@ class LocationSimulator(private val context: Context) {
         }
     }
 
+    @Synchronized
     fun stop() {
         if (gpsProviderAdded) {
             try {
                 locationManager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, false)
                 locationManager.removeTestProvider(LocationManager.GPS_PROVIDER)
-            } catch (_: Exception) {}
+            } catch (e: Exception) { DebugLogger.log("Location", "stop() 清除 gps provider 失敗：$e") }
             gpsProviderAdded = false
         }
         if (networkProviderAdded) {
             try {
                 locationManager.setTestProviderEnabled(LocationManager.NETWORK_PROVIDER, false)
                 locationManager.removeTestProvider(LocationManager.NETWORK_PROVIDER)
-            } catch (_: Exception) {}
+            } catch (e: Exception) { DebugLogger.log("Location", "stop() 清除 network provider 失敗：$e") }
             networkProviderAdded = false
         }
         if (fusedProviderAdded) {
             try {
                 locationManager.setTestProviderEnabled(LocationManager.FUSED_PROVIDER, false)
                 locationManager.removeTestProvider(LocationManager.FUSED_PROVIDER)
-            } catch (_: Exception) {}
+            } catch (e: Exception) { DebugLogger.log("Location", "stop() 清除 fused provider 失敗：$e") }
             fusedProviderAdded = false
         }
         wpIndex = 0; wpForward = true; reachedEnd = false
+        // Reset so a fresh session doesn't inherit a near-threshold streak from whatever the
+        // previous session ended on — otherwise a handful of failures right after restarting
+        // could immediately fire onPersistentFailure for a session that just began.
+        gpsFailureStreak = 0; networkFailureStreak = 0; fusedFailureStreak = 0
     }
 
     /** Advances one tick along the waypoint path. Returns true the instant STOP_AT_END reaches
      *  the final point (a one-time transition event the caller should react to). */
+    @Synchronized
     fun tick(speedKmh: Double, loopMode: WaypointLoopMode): Boolean {
         if (!gpsProviderAdded || wpList.size < 2 || reachedEnd) {
             // Stationary — no jitter, same reasoning as keepAlive().
@@ -307,9 +328,19 @@ class LocationSimulator(private val context: Context) {
             if (!ok) {
                 // The OS silently dropped/disabled this test provider — re-register it exactly
                 // like a manual full stop+restart would, then retry once, so the walk keeps
-                // working without the user having to notice and intervene.
+                // working without the user having to notice and intervene. Also recorded as a
+                // Crashlytics non-fatal purely for frequency data — every prior attempt at
+                // understanding how often this actually happens relied on a user noticing and
+                // manually sharing a debug log, which is a heavily biased sample.
                 val reRegistered = reRegisterProvider(provider)
                 DebugLogger.log("Location", "重新註冊 provider=$provider result=$reRegistered")
+                runCatching {
+                    com.google.firebase.crashlytics.FirebaseCrashlytics.getInstance().apply {
+                        setCustomKey("provider", provider)
+                        setCustomKey("reRegistered", reRegistered)
+                        recordException(IllegalStateException("mock provider revoked: $provider"))
+                    }
+                }
                 if (reRegistered) {
                     ok = runCatching { locationManager.setTestProviderLocation(provider, loc) }
                         .onFailure { DebugLogger.log("Location", "重試後仍失敗 provider=$provider ex=$it") }
@@ -331,7 +362,11 @@ class LocationSimulator(private val context: Context) {
             if (!ok) {
                 DebugLogger.log("Location", "provider=$provider 連續失敗=$newStreak lat=$lat lng=$lng")
             }
-            if (provider == LocationManager.GPS_PROVIDER && newStreak == persistentFailureThreshold) {
+            // Not just GPS_PROVIDER — NETWORK_PROVIDER and FUSED_PROVIDER matter just as much
+            // here, since most fused-location clients (Pikmin Bloom included) never read
+            // GPS_PROVIDER directly. A silent persistent failure on either of those would
+            // otherwise never surface to the user at all.
+            if (newStreak == persistentFailureThreshold) {
                 onPersistentFailure?.invoke()
             }
         }

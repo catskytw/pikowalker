@@ -5,6 +5,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics")
 }
 
 // Auto-incremented on every Gradle configure (i.e. every build invocation) and persisted to
@@ -24,6 +26,7 @@ val localProps = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 val githubUpdateToken = localProps.getProperty("github.updateToken") ?: ""
+val mapsApiKey = localProps.getProperty("maps.apiKey") ?: ""
 
 android {
     namespace = "com.pikowalker.app"
@@ -39,6 +42,8 @@ android {
         buildConfigField("String", "GITHUB_UPDATE_TOKEN", "\"$githubUpdateToken\"")
         buildConfigField("String", "GITHUB_OWNER", "\"catskytw\"")
         buildConfigField("String", "GITHUB_REPO", "\"pikowalker\"")
+
+        manifestPlaceholders["mapsApiKey"] = mapsApiKey
     }
 
     buildTypes {
@@ -89,8 +94,15 @@ dependencies {
     // JSON 序列化 (儲存路線)
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
-    // osmdroid (raster OSM tiles, no API key, no native GL renderer)
-    implementation("org.osmdroid:osmdroid-android:6.1.20")
+    // Google Maps (native vector rendering, proper density-aware label sizing, custom JSON styling)
+    implementation("com.google.android.gms:play-services-maps:19.0.0")
+    implementation("com.google.maps.android:maps-compose:4.4.1")
+
+    // Crashlytics (automatic crash/ANR upload — CrashLogger's local reports still need the user
+    // to manually export and share them; this gets the same data without that step, including
+    // from users other than whoever's debugging locally)
+    implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
+    implementation("com.google.firebase:firebase-crashlytics")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

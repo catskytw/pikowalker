@@ -28,6 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 class MockLocationService : Service() {
 
@@ -342,12 +343,18 @@ class MockLocationService : Service() {
         repo.setRoutePaused(false)
         wakeLock?.let { if (it.isHeld) it.release() }
 
-        // Insert remaining steps synchronously so they can't be dropped if process dies.
+        // Insert remaining steps synchronously so they can't be dropped if process dies — bounded
+        // by a timeout so a slow/hung Health Connect call can't block the main thread indefinitely
+        // during teardown; losing the last few steps to a timeout beats stalling shutdown on it.
         val stepsRemaining = totalSteps - stepsAtLastInsert
         if (stepsRemaining > 0 && lastHcInsertMs > 0) {
             val start = lastHcInsertMs
             val end = System.currentTimeMillis()
-            runBlocking { withContext(Dispatchers.IO) { healthConnectHelper.insertSteps(stepsRemaining, start, end) } }
+            runBlocking {
+                withTimeoutOrNull(2_000L) {
+                    withContext(Dispatchers.IO) { healthConnectHelper.insertSteps(stepsRemaining, start, end) }
+                }
+            }
         }
         serviceScope.cancel()
     }

@@ -1,8 +1,12 @@
 package com.pikowalker.app.ui.screens
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.location.Address
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -24,6 +28,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -38,7 +44,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -62,17 +67,43 @@ import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
 import com.pikowalker.app.R
-import org.osmdroid.events.MapEventsReceiver
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-import org.osmdroid.util.GeoPoint as OsmGeoPoint
-import org.osmdroid.views.CustomZoomButtonsController
-import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.MapEventsOverlay
-import org.osmdroid.views.overlay.Marker
-import org.osmdroid.views.overlay.Polyline
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.JointType
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.MapStyleOptions
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.MapProperties
+import com.google.maps.android.compose.MapUiSettings
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.Polyline
+import com.google.maps.android.compose.rememberCameraPositionState
 import kotlin.math.*
 
 private const val MAX_PINS = 20
+
+// Switching tabs disposes and recreates MapScreen's whole composition — a plain remember{}
+// zoom var would reset every time. Holding it at the file/object level instead survives that,
+// so leaving 地圖 and coming back keeps whatever zoom the user had.
+private var lastMapZoom = 16f
+
+// Hides most POI icons/labels (shops, clinics, places of worship, transit stops) that were
+// cluttering the view at street zoom, while leaving parks/attractions, roads and water alone —
+// Google's style schema has no "village/里 boundary" knob, global map data doesn't carry that
+// granularity, so this is the closest available approximation of "just landmarks, not addresses".
+private const val MAP_STYLE_JSON = """
+[
+  {"featureType":"poi.business","stylers":[{"visibility":"off"}]},
+  {"featureType":"poi.medical","stylers":[{"visibility":"off"}]},
+  {"featureType":"poi.place_of_worship","stylers":[{"visibility":"off"}]},
+  {"featureType":"poi.government","stylers":[{"visibility":"off"}]},
+  {"featureType":"poi.school","elementType":"labels.icon","stylers":[{"visibility":"off"}]},
+  {"featureType":"poi.sports_complex","elementType":"labels.icon","stylers":[{"visibility":"off"}]},
+  {"featureType":"transit","stylers":[{"visibility":"off"}]}
+]
+"""
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -87,177 +118,89 @@ fun MapScreen(viewModel: WalkViewModel) {
     val scope = rememberCoroutineScope()
     val geocodingRepo = remember { GeocodingRepository(context) }
 
-    val mapView = remember {
-        MapView(context).apply {
-            setTileSource(TileSourceFactory.MAPNIK)
-            setMultiTouchControls(true)
-            zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
-            minZoomLevel = 3.0
-            maxZoomLevel = 20.0
-        }
-    }
-    var mapReady by remember { mutableStateOf(false) }
     var searchResult by remember { mutableStateOf<GeoPoint?>(null) }
     var searchCandidates by remember { mutableStateOf<List<Address>>(emptyList()) }
     var showSavedRoutesDialog by remember { mutableStateOf(false) }
+    var userLocation by remember { mutableStateOf<LatLng?>(null) }
+    var userBearing by remember { mutableStateOf(0f) }
 
-    val routePolyline = remember {
-        Polyline().apply {
-            outlinePaint.color = android.graphics.Color.parseColor("#2D6A4F")
-            outlinePaint.strokeWidth = 5f * context.resources.displayMetrics.density
-            outlinePaint.alpha = (0.8f * 255).toInt()
-            outlinePaint.strokeCap = Paint.Cap.ROUND
-            outlinePaint.strokeJoin = Paint.Join.ROUND
-            outlinePaint.isAntiAlias = true
-        }
+    // Re-checked fresh every time this composable is (re)entered — MapScreen's whole composition
+    // gets disposed and recreated on every tab switch (see lastMapZoom above), so this naturally
+    // re-verifies without any extra lifecycle wiring, including right after the user comes back
+    // from fixing it in 設定. Dismissing only lasts for this visit — not persisted — because unlike
+    // "虛擬位置應用程式" (which blocks 開始偽造GPS outright with its own error) battery optimization
+    // fails silently in the background, so a one-time-ever dismissal could hide a real problem.
+    val batteryOptExempt = remember {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        pm?.isIgnoringBatteryOptimizations(context.packageName) ?: true
     }
-    val waypointMarkers = remember { mutableListOf<Marker>() }
-    val userLocMarker = remember {
-        Marker(mapView).apply {
-            icon = BitmapDrawable(context.resources, userLocationBitmap(context))
-            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-            setInfoWindow(null)
-        }
-    }
-    // Direction arrow — center-anchored to the same point as the avatar; the bitmap itself is
-    // built symmetric around its own middle so the rotation pivot lands exactly on the avatar
-    // regardless of how osmdroid computes it (see bearingIndicatorBitmap).
-    val bearingMarker = remember {
-        Marker(mapView).apply {
-            icon = BitmapDrawable(context.resources, bearingIndicatorBitmap(context))
-            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-            setInfoWindow(null)
-        }
-    }
-    val searchPinMarker = remember {
-        Marker(mapView).apply {
-            icon = BitmapDrawable(context.resources, createSearchPinBitmap())
-            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-            setInfoWindow(null)
-        }
-    }
+    var batteryBannerDismissed by remember { mutableStateOf(false) }
 
-    fun flyTo(lat: Double, lng: Double) {
-        mapView.controller.setZoom(16.0)
-        mapView.controller.animateTo(OsmGeoPoint(lat, lng))
-    }
-
-    // osmdroid draws overlays in list order (later = on top). Waypoint pins get added/removed
-    // as the route changes, which would otherwise leave them stacked above the avatar whenever
-    // a pin lands on the same spot — re-adding these two at the end after every overlay change
-    // keeps the avatar always on top, regardless of what else touched the list since.
-    fun bringUserMarkersToFront() {
-        mapView.overlays.remove(userLocMarker)
-        mapView.overlays.remove(bearingMarker)
-        mapView.overlays.add(userLocMarker)
-        mapView.overlays.add(bearingMarker)
-    }
-
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    DisposableEffect(lifecycle) {
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_RESUME -> mapView.onResume()
-                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
-                Lifecycle.Event.ON_DESTROY -> mapView.onDetach()
-                else -> {}
-            }
-        }
-        lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer) }
-    }
-
-    LaunchedEffect(mapView) {
+    val cameraPositionState = rememberCameraPositionState {
         val initLat = if (state.currentLat != 0.0) state.currentLat else 25.0330
         val initLng = if (state.currentLng != 0.0) state.currentLng else 121.5654
-
-        mapView.controller.setZoom(16.0)
-        mapView.controller.setCenter(OsmGeoPoint(initLat, initLng))
-
-        mapView.overlays.add(MapEventsOverlay(object : MapEventsReceiver {
-            override fun singleTapConfirmedHelper(p: OsmGeoPoint): Boolean {
-                searchResult = null
-                searchCandidates = emptyList()
-                viewModel.tapMap(p.latitude, p.longitude)
-                return true
-            }
-            override fun longPressHelper(p: OsmGeoPoint): Boolean = false
-        }))
-        mapView.overlays.add(routePolyline)
-
-        getLastKnownLocation(context)?.let { loc ->
-            if (state.currentLat == 0.0 && state.currentLng == 0.0) {
-                userLocMarker.position = OsmGeoPoint(loc.latitude, loc.longitude)
-                bearingMarker.position = OsmGeoPoint(loc.latitude, loc.longitude)
-                bearingMarker.rotation = -loc.bearing
-                bringUserMarkersToFront()
-                mapView.controller.animateTo(OsmGeoPoint(loc.latitude, loc.longitude))
-            }
-        }
-
-        mapReady = true
-        mapView.invalidate()
+        position = CameraPosition.fromLatLngZoom(LatLng(initLat, initLng), lastMapZoom)
+    }
+    val mapProperties = remember {
+        MapProperties(
+            mapStyleOptions = MapStyleOptions(MAP_STYLE_JSON),
+            minZoomPreference = 3f,
+            maxZoomPreference = 20f
+        )
+    }
+    val mapUiSettings = remember {
+        MapUiSettings(
+            zoomControlsEnabled = false,
+            myLocationButtonEnabled = false,
+            mapToolbarEnabled = false,
+            // Google's own compass only fades in once the map is actually rotated off north,
+            // which reads as "the compass disappeared" compared to the always-visible button
+            // this had before — a custom always-on one below replaces it instead.
+            compassEnabled = false,
+            rotationGesturesEnabled = true
+        )
     }
 
-    // Waypoints + route line
-    LaunchedEffect(state.waypoints, state.waypointLoopMode, mapReady) {
-        if (!mapReady) return@LaunchedEffect
-        val wps = state.waypoints
-
-        while (waypointMarkers.size > wps.size) {
-            mapView.overlays.remove(waypointMarkers.removeAt(waypointMarkers.lastIndex))
+    // Deliberately doesn't touch zoom — re-centering (search result, saved route, my-location)
+    // shouldn't undo a zoom level the user already chose.
+    fun flyTo(lat: Double, lng: Double) {
+        scope.launch {
+            cameraPositionState.animate(CameraUpdateFactory.newLatLng(LatLng(lat, lng)))
         }
-        while (waypointMarkers.size < wps.size) {
-            val marker = Marker(mapView).apply {
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                setInfoWindow(null)
-            }
-            waypointMarkers.add(marker)
-            mapView.overlays.add(marker)
-        }
-        wps.forEachIndexed { i, wp ->
-            waypointMarkers[i].apply {
-                position = OsmGeoPoint(wp.lat, wp.lng)
-                icon = BitmapDrawable(context.resources, createPinBitmap((i + 1).coerceAtMost(MAX_PINS)))
-            }
-        }
-
-        if (wps.size >= 2) {
-            val coords = buildList {
-                addAll(wps)
-                when (state.waypointLoopMode) {
-                    WaypointLoopMode.LOOP -> add(wps[0])
-                    WaypointLoopMode.PING_PONG -> addAll(wps.asReversed().drop(1))
-                    WaypointLoopMode.STOP_AT_END -> {}
-                }
-            }
-            routePolyline.setPoints(coords.map { OsmGeoPoint(it.lat, it.lng) })
-        } else {
-            routePolyline.setPoints(emptyList())
-        }
-        bringUserMarkersToFront()
-        mapView.invalidate()
     }
 
-    // Search result pin — purely visual, never touches the waypoint list on its own
-    LaunchedEffect(searchResult, mapReady) {
-        if (!mapReady) return@LaunchedEffect
-        val result = searchResult
-        if (result != null) {
-            searchPinMarker.position = OsmGeoPoint(result.lat, result.lng)
-            if (searchPinMarker !in mapView.overlays) mapView.overlays.add(searchPinMarker)
-        } else {
-            mapView.overlays.remove(searchPinMarker)
+    fun resetNorth() {
+        scope.launch {
+            cameraPositionState.animate(
+                CameraUpdateFactory.newCameraPosition(
+                    CameraPosition.Builder(cameraPositionState.position).bearing(0f).build()
+                )
+            )
         }
-        mapView.invalidate()
+    }
+
+    LaunchedEffect(cameraPositionState) {
+        snapshotFlow { cameraPositionState.position.zoom }.collect { lastMapZoom = it }
+    }
+
+    // Nothing faked yet and no waypoints ever placed — the only sensible starting view is
+    // wherever the phone actually is. getLastKnownLocation() alone often comes back empty on
+    // a phone that hasn't used real GPS recently, so fall back to requesting one live fix.
+    LaunchedEffect(Unit) {
+        if (state.currentLat == 0.0 && state.currentLng == 0.0) {
+            getFreshLocation(context)?.let { loc ->
+                userLocation = LatLng(loc.latitude, loc.longitude)
+                userBearing = loc.bearing
+                cameraPositionState.animate(CameraUpdateFactory.newLatLng(LatLng(loc.latitude, loc.longitude)))
+            }
+        }
     }
 
     // A coordinate handed to us by another app (e.g. opening a Pikmin Bloom flower/mushroom's
     // geo: link with PikoWalker). Treated exactly like a search result — just a pin to confirm
     // via 設為模擬點, never moves fake GPS on its own.
-    LaunchedEffect(pendingDeepLinkPoint, mapReady) {
+    LaunchedEffect(pendingDeepLinkPoint) {
         val point = pendingDeepLinkPoint ?: return@LaunchedEffect
-        if (!mapReady) return@LaunchedEffect
         flyTo(point.lat, point.lng)
         searchResult = point
         searchCandidates = emptyList()
@@ -265,18 +208,14 @@ fun MapScreen(viewModel: WalkViewModel) {
     }
 
     // Update user-location icon + animate camera while statically holding
-    LaunchedEffect(state.currentLat, state.currentLng, mapReady) {
-        if (!mapReady) return@LaunchedEffect
+    LaunchedEffect(state.currentLat, state.currentLng) {
         if (state.currentLat != 0.0 || state.currentLng != 0.0) {
-            val pos = OsmGeoPoint(state.currentLat, state.currentLng)
-            userLocMarker.position = pos
-            bearingMarker.position = pos
-            bearingMarker.rotation = -state.currentBearing
-            bringUserMarkersToFront()
+            val pos = LatLng(state.currentLat, state.currentLng)
+            userLocation = pos
+            userBearing = state.currentBearing
             if (state.isStaticAtWaypoint) {
-                mapView.controller.animateTo(pos)
+                cameraPositionState.animate(CameraUpdateFactory.newLatLng(pos))
             }
-            mapView.invalidate()
         }
     }
 
@@ -284,36 +223,88 @@ fun MapScreen(viewModel: WalkViewModel) {
     // (rather than gating on currentLat/Lng being unset) so it resumes correctly after fake
     // GPS has been used at least once — currentLat/Lng retain the last faked position and
     // never reset to 0,0 on their own.
-    LaunchedEffect(state.isSimulating, mapReady) {
-        if (!mapReady) return@LaunchedEffect
+    LaunchedEffect(state.isSimulating) {
         if (!state.isSimulating) {
             while (true) {
                 getLastKnownLocation(context)?.let { loc ->
-                    val pos = OsmGeoPoint(loc.latitude, loc.longitude)
-                    userLocMarker.position = pos
-                    bearingMarker.position = pos
-                    bearingMarker.rotation = -loc.bearing
-                    bringUserMarkersToFront()
-                    mapView.invalidate()
+                    userLocation = LatLng(loc.latitude, loc.longitude)
+                    userBearing = loc.bearing
                 }
                 kotlinx.coroutines.delay(3_000)
             }
         }
     }
 
+    val routeColor = remember { Color(0xFF2D6A4F) }
+    val routeWidthPx = with(LocalDensity.current) { 5.dp.toPx() }
+    val userLocationBitmap = remember { userLocationBitmap(context) }
+    val bearingBitmap = remember { bearingIndicatorBitmap(context) }
+    val searchPinBitmap = remember { createSearchPinBitmap() }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.weight(1f)) {
-            AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
+            GoogleMap(
+                modifier = Modifier.fillMaxSize(),
+                cameraPositionState = cameraPositionState,
+                properties = mapProperties,
+                uiSettings = mapUiSettings,
+                onMapClick = { latLng ->
+                    searchResult = null
+                    searchCandidates = emptyList()
+                    viewModel.tapMap(latLng.latitude, latLng.longitude)
+                }
+            ) {
+                if (state.waypoints.size >= 2) {
+                    val coords = buildList {
+                        addAll(state.waypoints)
+                        when (state.waypointLoopMode) {
+                            WaypointLoopMode.LOOP -> add(state.waypoints[0])
+                            WaypointLoopMode.PING_PONG -> addAll(state.waypoints.asReversed().drop(1))
+                            WaypointLoopMode.STOP_AT_END -> {}
+                        }
+                    }
+                    Polyline(
+                        points = coords.map { LatLng(it.lat, it.lng) },
+                        color = routeColor,
+                        width = routeWidthPx,
+                        jointType = JointType.ROUND
+                    )
+                }
 
-            Text(
-                "© OpenStreetMap contributors",
-                fontSize = 9.sp,
-                color = Color(0xFF444444),
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .background(Color.White.copy(alpha = 0.7f))
-                    .padding(horizontal = 4.dp, vertical = 1.dp)
-            )
+                state.waypoints.forEachIndexed { i, wp ->
+                    val markerState = remember(wp.lat, wp.lng) { MarkerState(position = LatLng(wp.lat, wp.lng)) }
+                    val icon = remember(i, state.waypoints.size) {
+                        BitmapDescriptorFactory.fromBitmap(createPinBitmap((i + 1).coerceAtMost(MAX_PINS)))
+                    }
+                    Marker(state = markerState, icon = icon, anchor = Offset(0.5f, 1f), zIndex = 0f)
+                }
+
+                searchResult?.let { result ->
+                    Marker(
+                        state = remember(result) { MarkerState(position = LatLng(result.lat, result.lng)) },
+                        icon = BitmapDescriptorFactory.fromBitmap(searchPinBitmap),
+                        anchor = Offset(0.5f, 1f),
+                        zIndex = 0.5f
+                    )
+                }
+
+                userLocation?.let { pos ->
+                    Marker(
+                        state = remember(pos) { MarkerState(position = pos) },
+                        icon = BitmapDescriptorFactory.fromBitmap(bearingBitmap),
+                        anchor = Offset(0.5f, 0.5f),
+                        rotation = userBearing,
+                        flat = true,
+                        zIndex = 1f
+                    )
+                    Marker(
+                        state = remember(pos) { MarkerState(position = pos) },
+                        icon = BitmapDescriptorFactory.fromBitmap(userLocationBitmap),
+                        anchor = Offset(0.5f, 0.5f),
+                        zIndex = 1f
+                    )
+                }
+            }
 
             Column(
                 modifier = Modifier
@@ -431,6 +422,48 @@ fun MapScreen(viewModel: WalkViewModel) {
                         }
                     }
                 }
+                if (!batteryOptExempt && !batteryBannerDismissed) {
+                    Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFF57C00).copy(alpha = 0.92f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
+                        ) {
+                            Text(
+                                "電池最佳化未排除，背景偽造GPS可能被系統暫停",
+                                fontSize = 11.sp, color = Color.White,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(
+                                onClick = {
+                                    val intent = Intent(
+                                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                        Uri.parse("package:${context.packageName}")
+                                    )
+                                    runCatching { context.startActivity(intent) }
+                                        .onFailure { context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+                                }
+                            ) { Text("去設定", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White) }
+                            Icon(
+                                Icons.Default.Close, "關閉提示",
+                                modifier = Modifier.size(16.dp).clickable { batteryBannerDismissed = true },
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
+            }
+
+            SmallFloatingActionButton(
+                onClick = { resetNorth() },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 132.dp),
+                containerColor = Color.White,
+                contentColor = ForestGreen,
+                elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 6.dp)
+            ) {
+                Icon(
+                    Icons.Default.Navigation, "指北針，點一下轉回正北",
+                    Modifier.size(20.dp).rotate(-cameraPositionState.position.bearing)
+                )
             }
 
             SmallFloatingActionButton(
@@ -1495,12 +1528,46 @@ private fun getLastKnownLocation(context: android.content.Context): android.loca
     } catch (_: Exception) { null }
 }
 
-/** Direction arrow. The marker is center-anchored (see the layer setup above) so osmdroid
- *  rotates it around the exact same point the avatar sits at, regardless of whether it pivots
- *  rotation around the anchor or around the bitmap's own center — the bitmap is built symmetric
- *  around its vertical midpoint (arrow drawn in the top half, bottom half left blank) so those
- *  two pivot points always coincide either way. The blank half sized to the avatar's own radius
- *  keeps the arrowhead orbiting just outside the 52dp avatar ring instead of sitting underneath it. */
+/** getLastKnownLocation() only returns a cached fix, which is often simply absent on a phone
+ *  that hasn't used real GPS in a while — falls back to requesting one live update (with a
+ *  timeout, since a fix can take a few seconds or never arrive indoors). */
+@SuppressLint("MissingPermission")
+private suspend fun getFreshLocation(context: android.content.Context): android.location.Location? {
+    getLastKnownLocation(context)?.let { return it }
+    val lm = context.getSystemService(android.content.Context.LOCATION_SERVICE) as? android.location.LocationManager
+        ?: return null
+    val provider = when {
+        lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) -> android.location.LocationManager.GPS_PROVIDER
+        lm.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER) -> android.location.LocationManager.NETWORK_PROVIDER
+        else -> return null
+    }
+    return kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+        kotlinx.coroutines.suspendCancellableCoroutine<android.location.Location?> { cont ->
+            val listener = object : android.location.LocationListener {
+                override fun onLocationChanged(location: android.location.Location) {
+                    lm.removeUpdates(this)
+                    if (cont.isActive) cont.resumeWith(Result.success(location))
+                }
+                @Deprecated("Deprecated in Java")
+                override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
+                override fun onProviderEnabled(provider: String) {}
+                override fun onProviderDisabled(provider: String) {}
+            }
+            cont.invokeOnCancellation { lm.removeUpdates(listener) }
+            try {
+                @Suppress("DEPRECATION")
+                lm.requestSingleUpdate(provider, listener, android.os.Looper.getMainLooper())
+            } catch (_: Exception) {
+                if (cont.isActive) cont.resumeWith(Result.success(null))
+            }
+        }
+    }
+}
+
+/** Direction arrow. The marker is center-anchored (see the Marker call site above), rotating
+ *  around the exact point the avatar sits at — the bitmap itself is built symmetric around its
+ *  vertical midpoint (arrow drawn in the top half, bottom half left blank) so the visible
+ *  arrowhead orbits just outside the 52dp avatar ring instead of sitting underneath it. */
 private fun bearingIndicatorBitmap(context: android.content.Context): Bitmap {
     val dp          = context.resources.displayMetrics.density
     val avatarR     = 26 * dp   // half of the 52dp avatar badge

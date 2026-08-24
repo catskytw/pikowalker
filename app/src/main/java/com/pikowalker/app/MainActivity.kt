@@ -108,10 +108,9 @@ class MainActivity : ComponentActivity() {
     }
 
     /** getIntent() otherwise keeps returning whatever ACTION_VIEW/ACTION_SEND intent last
-     *  started or was delivered to this Activity — including on every future onCreate() from a
-     *  recreate() (see onStart() above) or a system-restored task — so once it's been handled,
-     *  replace it with an inert one or it gets silently reprocessed forever, re-showing the
-     *  設為模擬點 prompt for a link the user already dealt with. */
+     *  started or was delivered to this Activity — including on a system-restored task — so
+     *  once it's been handled, replace it with an inert one or it gets silently reprocessed
+     *  forever, re-showing the 設為模擬點 prompt for a link the user already dealt with. */
     private fun clearIntentData() {
         setIntent(Intent(this, MainActivity::class.java))
     }
@@ -123,14 +122,35 @@ class MainActivity : ComponentActivity() {
      *    the only way to get the coordinate back out. */
     private fun handleIncomingIntent(intent: Intent?) {
         intent ?: return
+        DebugLogger.log("Share", "handleIncomingIntent action=${intent.action} type=${intent.type} hasData=${intent.data != null}")
         when (intent.action) {
             Intent.ACTION_VIEW -> intent.data?.let { uri ->
-                parseGeoUri(uri)?.let { (lat, lng) -> viewModel.setDeepLinkPoint(lat, lng) }
+                val parsed = parseGeoUri(uri)
+                if (parsed != null) {
+                    viewModel.setDeepLinkPoint(parsed.first, parsed.second)
+                } else {
+                    DebugLogger.log("Share", "geo: URI 無法解析 scheme=${uri.scheme}")
+                    recordShareParseFailure("geo_uri")
+                }
             }
             Intent.ACTION_SEND -> {
                 if (intent.type == "text/plain") {
                     handleSharedText(intent.getStringExtra(Intent.EXTRA_TEXT))
+                } else {
+                    DebugLogger.log("Share", "ACTION_SEND 但 type 不是 text/plain：${intent.type}")
                 }
+            }
+        }
+    }
+
+    /** Non-fatal purely for frequency data on the Crashlytics dashboard — deliberately doesn't
+     *  include the shared text/URL itself (that's the user's location data; it stays in the
+     *  local DebugLogger export only, never leaves the device unless they choose to share it). */
+    private fun recordShareParseFailure(reason: String) {
+        runCatching {
+            com.google.firebase.crashlytics.FirebaseCrashlytics.getInstance().apply {
+                setCustomKey("reason", reason)
+                recordException(IllegalStateException("shared location text/link could not be parsed: $reason"))
             }
         }
     }
@@ -171,7 +191,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleSharedText(text: String?) {
-        if (text.isNullOrBlank()) return
+        DebugLogger.log("Share", "handleSharedText 收到文字，長度=${text?.length ?: 0}")
+        if (text.isNullOrBlank()) {
+            DebugLogger.log("Share", "分享文字是空的，不處理")
+            return
+        }
         RouteShareCodec.decode(text)?.let { route -> viewModel.setPendingImportRoute(route); return }
         parseCoordsFromText(text)?.let { (lat, lng) -> viewModel.setDeepLinkPoint(lat, lng); return }
 
@@ -179,7 +203,14 @@ class MainActivity : ComponentActivity() {
         // resolve the redirect chain first, then parse the final URL the same way. goo.gl in
         // particular (it's a deprecated, increasingly flaky Google service) has been seen to
         // intermittently fail a link that resolves fine moments later, so retry a few times.
-        val url = Regex("https?://\\S+").find(text)?.value ?: return
+        val url = Regex("https?://\\S+").find(text)?.value
+        if (url == null) {
+            // Neither a route code, a direct coordinate, nor a URL — nothing left to try. This
+            // used to silently no-op, which is exactly what "分享沒反應" looks like from outside.
+            DebugLogger.log("Share", "文字裡沒有路線代碼、座標，也沒有網址，放棄解析")
+            recordShareParseFailure("no_url_no_coords")
+            return
+        }
         lifecycleScope.launch {
             viewModel.setResolvingSharedLink(true)
             try {
@@ -197,8 +228,12 @@ class MainActivity : ComponentActivity() {
                 } else if (resolved?.contains("/maps/place/") == true) {
                     // A business/POI share references Google's internal place ID rather than
                     // embedding a coordinate — nothing here to parse without scraping their page.
+                    DebugLogger.log("Share", "解析到商家地點連結，Google 沒有內嵌座標")
+                    recordShareParseFailure("place_id_no_coords")
                     viewModel.setError("這是商家地點連結，Google 沒有把座標放進連結裡，請改用複製貼上經緯度")
                 } else {
+                    DebugLogger.log("Share", "解析失敗，resolved=${resolved != null}")
+                    recordShareParseFailure("url_resolved_but_unparseable")
                     viewModel.setError("無法解析分享的地圖連結，請改用複製貼上經緯度")
                 }
             } finally {

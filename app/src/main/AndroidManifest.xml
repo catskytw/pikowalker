@@ -42,6 +42,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.PikoWalker">
 
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${mapsApiKey}" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

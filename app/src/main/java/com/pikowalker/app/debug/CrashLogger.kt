@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.pikowalker.app.BuildConfig
 import java.io.File
 import java.io.PrintWriter
@@ -30,6 +31,11 @@ object CrashLogger {
     private const val DIR_NAME = "crash_logs"
     private const val MAX_REPORTS = 5
 
+    /** Crashlytics installs its own uncaught-exception handler when the SDK auto-initializes
+     *  (via a ContentProvider, before Application.onCreate() ever runs) — so by the time this
+     *  runs, [Thread.getDefaultUncaughtExceptionHandler] already returns Crashlytics's handler,
+     *  and chaining to `previous` below hands it off automatically. No separate recordException()
+     *  call needed here for genuine fatal crashes. */
     fun install(context: Context) {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -43,9 +49,17 @@ object CrashLogger {
     }
 
     /** For an exception a resilience boundary already caught and recovered from — the app did
-     *  NOT crash, but the failure is written to disk anyway so it isn't lost on next restart. */
+     *  NOT crash, but the failure is written to disk anyway so it isn't lost on next restart.
+     *  Also forwarded to Crashlytics as a non-fatal — unlike the local file, this reaches the
+     *  dashboard automatically without the user having to notice, export, and share it. */
     fun writeCaughtReport(context: Context, tag: String, throwable: Throwable) {
         runCatching { writeReport(context, "caught", throwable, thread = null, tag = tag) }
+        runCatching {
+            FirebaseCrashlytics.getInstance().apply {
+                setCustomKey("tag", tag)
+                recordException(throwable)
+            }
+        }
     }
 
     /** Call once at process startup. An ANR never runs any of PikoWalker's own code — the

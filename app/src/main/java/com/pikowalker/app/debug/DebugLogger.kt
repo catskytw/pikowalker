@@ -39,6 +39,11 @@ object DebugLogger {
 
     fun log(tag: String, message: String) {
         android.util.Log.d("Piko-$tag", message)
+        // Mirrored to Crashlytics as a breadcrumb — attaches to whatever recordException/crash
+        // fires next, giving the same cross-subsystem timeline correlation (Activity lifecycle
+        // vs. Location events) that previously required the user to notice, export, and share
+        // this log by hand. Includes real/simulated lat-lng from the periodic Service snapshots.
+        runCatching { com.google.firebase.crashlytics.FirebaseCrashlytics.getInstance().log("$tag: $message") }
         val now = System.currentTimeMillis()
         val line = "[${timeFormat.format(Date(now))}] $tag: $message"
         entries.addLast(now to line)

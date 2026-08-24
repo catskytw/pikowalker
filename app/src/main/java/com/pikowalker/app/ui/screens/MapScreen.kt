@@ -127,14 +127,21 @@ fun MapScreen(viewModel: WalkViewModel) {
     // Re-checked fresh every time this composable is (re)entered — MapScreen's whole composition
     // gets disposed and recreated on every tab switch (see lastMapZoom above), so this naturally
     // re-verifies without any extra lifecycle wiring, including right after the user comes back
-    // from fixing it in 設定. Dismissing only lasts for this visit — not persisted — because unlike
-    // "虛擬位置應用程式" (which blocks 開始偽造GPS outright with its own error) battery optimization
-    // fails silently in the background, so a one-time-ever dismissal could hide a real problem.
+    // from fixing it in 設定. Dismissing only lasts for this visit — not persisted — because these
+    // fail silently rather than blocking anything outright (虛擬位置應用程式 does also surface its
+    // own error the moment 開始偽造GPS is tapped, but by then the user has already hit a dead end;
+    // this warns before that happens instead).
     val batteryOptExempt = remember {
         val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         pm?.isIgnoringBatteryOptimizations(context.packageName) ?: true
     }
-    var batteryBannerDismissed by remember { mutableStateOf(false) }
+    val isMockLocationApp = remember {
+        // Skip the check entirely while a simulation is already running — the check itself
+        // registers then removes a GPS test provider, which would rip out a live registration
+        // MockLocationService currently depends on. Already simulating is itself proof it's fine.
+        if (state.isSimulating) true else checkIsMockLocationApp(context)
+    }
+    var authBannerDismissed by remember { mutableStateOf(false) }
 
     val cameraPositionState = rememberCameraPositionState {
         val initLat = if (state.currentLat != 0.0) state.currentLat else 25.0330
@@ -422,32 +429,51 @@ fun MapScreen(viewModel: WalkViewModel) {
                         }
                     }
                 }
-                if (!batteryOptExempt && !batteryBannerDismissed) {
+                val missingAuthCount = (if (batteryOptExempt) 0 else 1) + (if (isMockLocationApp) 0 else 1)
+                if (missingAuthCount > 0 && !authBannerDismissed) {
                     Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFF57C00).copy(alpha = 0.92f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
-                        ) {
-                            Text(
-                                "電池最佳化未排除，背景偽造GPS可能被系統暫停",
-                                fontSize = 11.sp, color = Color.White,
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextButton(
-                                onClick = {
-                                    val intent = Intent(
-                                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                                        Uri.parse("package:${context.packageName}")
-                                    )
-                                    runCatching { context.startActivity(intent) }
-                                        .onFailure { context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-                                }
-                            ) { Text("去設定", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White) }
-                            Icon(
-                                Icons.Default.Close, "關閉提示",
-                                modifier = Modifier.size(16.dp).clickable { batteryBannerDismissed = true },
-                                tint = Color.White
-                            )
+                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                            Row(verticalAlignment = Alignment.Top) {
+                                Text(
+                                    when {
+                                        missingAuthCount > 1 -> "多項未授權，PikoWalker 可能功能無法正確運作"
+                                        !batteryOptExempt -> "電池最佳化未排除，背景偽造GPS可能被系統暫停"
+                                        else -> "尚未選取 PikoWalker 為虛擬位置應用程式，偽造GPS會立即失敗"
+                                    },
+                                    fontSize = 11.sp, lineHeight = 15.sp, color = Color.White,
+                                    style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(
+                                    Icons.Default.Close, "關閉提示",
+                                    modifier = Modifier
+                                        .padding(start = 8.dp)
+                                        .size(16.dp)
+                                        .clickable { authBannerDismissed = true },
+                                    tint = Color.White
+                                )
+                            }
+                            if (missingAuthCount == 1) {
+                                Spacer(Modifier.height(6.dp))
+                                Button(
+                                    onClick = {
+                                        val intent = if (!batteryOptExempt) {
+                                            Intent(
+                                                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                                Uri.parse("package:${context.packageName}")
+                                            )
+                                        } else {
+                                            Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                                        }
+                                        runCatching { context.startActivity(intent) }
+                                            .onFailure { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
+                                    },
+                                    modifier = Modifier.heightIn(min = 28.dp),
+                                    shape = RoundedCornerShape(7.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFFF57C00)),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                                ) { Text("去設定", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
+                            }
                         }
                     }
                 }
@@ -1709,4 +1735,30 @@ private fun createSearchPinBitmap(): Bitmap {
     cv.drawCircle(cx, cy, r * 0.34f, p)
 
     return bmp
+}
+
+/** Whether PikoWalker is currently selected as the 開發人員選項 → 選取模擬位置應用程式. There's no
+ *  direct read-only API for this, so the only way to find out is to try registering a test
+ *  provider — if that throws SecurityException, we're not selected. Must not be called while a
+ *  simulation is already running (see the MapScreen call site) since it also removes the
+ *  provider it just added. */
+@SuppressLint("MissingPermission")
+private fun checkIsMockLocationApp(context: android.content.Context): Boolean {
+    val lm = context.getSystemService(android.content.Context.LOCATION_SERVICE) as? android.location.LocationManager
+        ?: return false
+    return try {
+        lm.addTestProvider(
+            android.location.LocationManager.GPS_PROVIDER,
+            false, false, false, false, false,
+            true, true,
+            android.location.Criteria.POWER_LOW,
+            android.location.Criteria.ACCURACY_FINE
+        )
+        try { lm.removeTestProvider(android.location.LocationManager.GPS_PROVIDER) } catch (_: Exception) {}
+        true
+    } catch (_: SecurityException) {
+        false
+    } catch (_: Exception) {
+        true
+    }
 }

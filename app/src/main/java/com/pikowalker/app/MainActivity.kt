@@ -84,30 +84,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private var backgroundedAt: Long? = null
-
     override fun onStart() {
         super.onStart()
-        val since = backgroundedAt
-        backgroundedAt = null
-        val backgroundedMs = since?.let { System.currentTimeMillis() - it }
-        // MapLibre's native renderer has been observed to wedge permanently — the main thread
-        // stuck forever inside MapRenderer::update()'s native mutex, confirmed live via repeated
-        // thread dumps — after the app sits backgrounded for a long stretch. Recreating the whole
-        // Activity here takes the exact same path a cold launch already goes through cleanly,
-        // rather than trying to hand-roll tearing down and rebuilding just the MapView inside a
-        // live composition, which turned out to have its own Compose/AndroidView lifecycle edge
-        // cases (stale factory reuse, zero-sized SurfaceView on rebuild).
-        val willRecreate = backgroundedMs != null && backgroundedMs > REBUILD_AFTER_BACKGROUND_MS
-        DebugLogger.log("Activity", "onStart backgroundedMs=$backgroundedMs willRecreate=$willRecreate")
-        if (willRecreate) {
-            recreate()
-        }
+        DebugLogger.log("Activity", "onStart")
     }
 
     override fun onStop() {
         super.onStop()
-        backgroundedAt = System.currentTimeMillis()
         DebugLogger.log("Activity", "onStop isFinishing=$isFinishing isChangingConfigurations=$isChangingConfigurations")
     }
 
@@ -278,10 +261,6 @@ class MainActivity : ComponentActivity() {
 
     fun requestHcPermission() {
         hcPermissionLauncher.launch(HealthConnectHelper.PERMISSIONS)
-    }
-
-    private companion object {
-        const val REBUILD_AFTER_BACKGROUND_MS = 3 * 60_000L
     }
 }
 

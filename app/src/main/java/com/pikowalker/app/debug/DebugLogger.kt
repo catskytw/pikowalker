@@ -1,8 +1,16 @@
 package com.pikowalker.app.debug
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Criteria
+import android.location.LocationManager
 import android.os.Build
+import android.os.PowerManager
+import androidx.core.content.ContextCompat
 import com.pikowalker.app.BuildConfig
+import com.pikowalker.app.schedule.ScheduleManager
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -73,6 +81,7 @@ object DebugLogger {
             appendLine("PikoWalker 除錯紀錄")
             appendLine("版本：${BuildConfig.VERSION_NAME}")
             appendLine("裝置：${Build.MANUFACTURER} ${Build.MODEL}（Android ${Build.VERSION.RELEASE}）")
+            appendLine("授權狀態：${permissionSnapshot(context)}")
             appendLine("涵蓋範圍：最近 $minutes 分鐘")
             appendLine("---")
             appendLine(snapshotText(minutes))
@@ -94,5 +103,46 @@ object DebugLogger {
             dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(MAX_EXPORTS)?.forEach { it.delete() }
         }
         return file
+    }
+
+    /** Same checks as the 設定與授權 screen, collapsed into one line — lets a shared export show
+     *  at a glance whether a reported bug might just be a permission the user never granted,
+     *  instead of having to ask them to go re-check Settings after the fact. */
+    private fun permissionSnapshot(context: Context): String {
+        val hasLocation = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasNotification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        else true
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val batteryExempt = pm?.isIgnoringBatteryOptimizations(context.packageName) ?: false
+        val isMockLocationApp = checkIsMockLocationApp(context)
+        val canScheduleExact = ScheduleManager.canScheduleExact(context)
+        return "位置權限=$hasLocation 通知權限=$hasNotification 虛擬位置應用程式=$isMockLocationApp " +
+            "電池最佳化排除=$batteryExempt 精確鬧鐘=$canScheduleExact"
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun checkIsMockLocationApp(context: Context): Boolean {
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return false
+        return try {
+            lm.addTestProvider(
+                LocationManager.GPS_PROVIDER,
+                false, false, false, false, false,
+                true, true,
+                Criteria.POWER_LOW,
+                Criteria.ACCURACY_FINE
+            )
+            try { lm.removeTestProvider(LocationManager.GPS_PROVIDER) } catch (_: Exception) {}
+            true
+        } catch (_: SecurityException) {
+            false
+        } catch (_: Exception) {
+            // Provider already exists = simulation is running = we are the mock app
+            true
+        }
     }
 }

@@ -89,8 +89,8 @@ dependencies {
     // JSON 序列化 (儲存路線)
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
-    // MapLibre GL (vector tiles, custom style, no API key)
-    implementation("org.maplibre.gl:android-sdk:11.5.1")
+    // osmdroid (raster OSM tiles, no API key, no native GL renderer)
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

@@ -6,7 +6,8 @@ import android.os.Build
 import com.pikowalker.app.debug.CrashLogger
 import com.pikowalker.app.debug.MainThreadWatchdog
 import com.pikowalker.app.settings.AppSettings
-import org.maplibre.android.MapLibre
+import org.osmdroid.config.Configuration
+import java.io.File
 
 class PikStepApp : Application() {
     val walkRepository = WalkRepository()
@@ -19,10 +20,21 @@ class PikStepApp : Application() {
         CrashLogger.checkForPreviousAnr(this)
         MainThreadWatchdog.start()
         clearStaleMockProviders()
-        MapLibre.getInstance(this)
+        initOsmdroid()
         AppSettings.init(this)
         routeRepository // eager init so SharedPreferences load before first UI frame
         scheduleRepository
+    }
+
+    /** osmdroid refuses to load tiles without a custom User-Agent (OSM's tile usage policy
+     *  blocks the default one) and otherwise falls back to external storage for its cache,
+     *  which needs a permission this app doesn't request — point it at the app's own cache dir
+     *  instead, which needs nothing. */
+    private fun initOsmdroid() {
+        val config = Configuration.getInstance()
+        config.userAgentValue = packageName
+        config.osmdroidBasePath = File(cacheDir, "osmdroid").apply { mkdirs() }
+        config.osmdroidTileCache = File(config.osmdroidBasePath, "tiles").apply { mkdirs() }
     }
 
     /** If a previous process died abnormally while a mock location provider was still

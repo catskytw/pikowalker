@@ -52,6 +52,12 @@ class LocationSimulator(private val context: Context) {
     private var fusedFailureStreak = 0
     var onPersistentFailure: (() -> Unit)? = null
 
+    // Wall-clock time of each provider's last successful push — lets a failure log show exactly
+    // how long the provider had actually been broken for, not just "it failed this tick".
+    private var gpsLastSuccessMs = 0L
+    private var networkLastSuccessMs = 0L
+    private var fusedLastSuccessMs = 0L
+
     private val rng = Random(System.nanoTime())
 
     @Synchronized
@@ -302,6 +308,52 @@ class LocationSimulator(private val context: Context) {
         else -> false
     }
 
+    /** Snapshot of system state at the exact moment a provider push fails — as opposed to the
+     *  periodic 30-tick diagnostic snapshot, which isn't aligned to a failure at all. Built to
+     *  test hypotheses we don't otherwise have evidence for: is this tied to Doze, memory
+     *  pressure, the OS's own process-importance re-evaluation (onTrimMemory / process
+     *  importance — a much more direct read of "does the system think we matter right now" than
+     *  inferring it from Activity visibility), screen state, charging state, or AppOps actually
+     *  revoking the MOCK_LOCATION grant (as opposed to LocationManagerService's own test-provider
+     *  table being cleared some other way — those are two different layers we've had no way to
+     *  tell apart). */
+    private fun failureDiagnostics(provider: String, lastSuccessMs: Long): String {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        val deviceIdle = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) pm?.isDeviceIdleMode else null
+        val screenOn = pm?.isInteractive
+
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+        val memInfo = android.app.ActivityManager.MemoryInfo()
+        runCatching { am?.getMemoryInfo(memInfo) }
+        val availMemMb = memInfo.availMem / (1024 * 1024)
+        val totalMemMb = memInfo.totalMem / (1024 * 1024)
+
+        // RunningAppProcessInfo.importance is the OS's own current priority tier for this
+        // process (e.g. IMPORTANCE_FOREGROUND_SERVICE=125, IMPORTANCE_BACKGROUND=400) — the most
+        // direct available read of whether the system currently considers us backgrounded.
+        val myPid = android.os.Process.myPid()
+        val processImportance = runCatching {
+            am?.runningAppProcesses?.firstOrNull { it.pid == myPid }?.importance
+        }.getOrNull()
+
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? android.app.AppOpsManager
+        val mockOpMode = runCatching {
+            @Suppress("DEPRECATION")
+            appOps?.checkOpNoThrow("android:mock_location", android.os.Process.myUid(), context.packageName)
+        }.getOrNull()
+
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager
+        val charging = runCatching {
+            bm?.isCharging
+        }.getOrNull()
+
+        val downMs = if (lastSuccessMs > 0) System.currentTimeMillis() - lastSuccessMs else -1L
+
+        return "pid=$myPid deviceIdle=$deviceIdle screenOn=$screenOn 可用記憶體=${availMemMb}MB/${totalMemMb}MB lowMemory=${memInfo.lowMemory} " +
+            "processImportance=$processImportance lastTrimMemory=${DebugLogger.lastTrimMemoryLevel} " +
+            "mockOpMode=$mockOpMode charging=$charging 距上次成功推送=${downMs}ms"
+    }
+
     private fun pushLocation(lat: Double, lng: Double, speed: Float, bearing: Float? = null) {
         val time = System.currentTimeMillis()
         val elapsed = SystemClock.elapsedRealtimeNanos()
@@ -322,10 +374,19 @@ class LocationSimulator(private val context: Context) {
                     if (bearing != null) bearingAccuracyDegrees = 10f
                 }
             }
-            var ok = runCatching { locationManager.setTestProviderLocation(provider, loc) }
-                .onFailure { DebugLogger.log("Location", "推送失敗 provider=$provider ex=$it") }
-                .isSuccess
+            val pushResult = runCatching { locationManager.setTestProviderLocation(provider, loc) }
+            var ok = pushResult.isSuccess
             if (!ok) {
+                // Captured before reRegisterProvider() touches anything — this is the state at
+                // the moment of failure, not after we've already patched it back up.
+                val lastSuccessMs = when (provider) {
+                    LocationManager.GPS_PROVIDER -> gpsLastSuccessMs
+                    LocationManager.NETWORK_PROVIDER -> networkLastSuccessMs
+                    else -> fusedLastSuccessMs
+                }
+                val diagnostics = failureDiagnostics(provider, lastSuccessMs)
+                DebugLogger.log("Location", "推送失敗 provider=$provider ex=${pushResult.exceptionOrNull()} $diagnostics")
+
                 // The OS silently dropped/disabled this test provider — re-register it exactly
                 // like a manual full stop+restart would, then retry once, so the walk keeps
                 // working without the user having to notice and intervene. Also recorded as a
@@ -338,6 +399,7 @@ class LocationSimulator(private val context: Context) {
                     com.google.firebase.crashlytics.FirebaseCrashlytics.getInstance().apply {
                         setCustomKey("provider", provider)
                         setCustomKey("reRegistered", reRegistered)
+                        setCustomKey("diagnostics", diagnostics)
                         recordException(IllegalStateException("mock provider revoked: $provider"))
                     }
                 }
@@ -345,6 +407,14 @@ class LocationSimulator(private val context: Context) {
                     ok = runCatching { locationManager.setTestProviderLocation(provider, loc) }
                         .onFailure { DebugLogger.log("Location", "重試後仍失敗 provider=$provider ex=$it") }
                         .isSuccess
+                }
+            }
+            if (ok) {
+                val now = System.currentTimeMillis()
+                when (provider) {
+                    LocationManager.GPS_PROVIDER -> gpsLastSuccessMs = now
+                    LocationManager.NETWORK_PROVIDER -> networkLastSuccessMs = now
+                    else -> fusedLastSuccessMs = now
                 }
             }
 

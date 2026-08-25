@@ -37,6 +37,11 @@ object DebugLogger {
     private val totalBytes = AtomicLong(0)
     private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.TAIWAN)
 
+    // Set by PikStepApp's ComponentCallbacks2 — the most recent onTrimMemory level, so a failure
+    // diagnostic can report it even when the failure doesn't happen to coincide with a fresh
+    // callback.
+    @Volatile var lastTrimMemoryLevel: Int? = null
+
     fun log(tag: String, message: String) {
         android.util.Log.d("Piko-$tag", message)
         // Mirrored to Crashlytics as a breadcrumb — attaches to whatever recordException/crash

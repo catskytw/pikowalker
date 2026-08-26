@@ -52,7 +52,11 @@ import com.pikowalker.app.viewmodel.WalkViewModel
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsScreen(viewModel: WalkViewModel, onRequestHcPermission: () -> Unit) {
+fun SettingsScreen(
+    viewModel: WalkViewModel,
+    onRequestHcPermission: () -> Unit,
+    onRequestBackgroundLocation: () -> Unit
+) {
     val state by viewModel.walkState.collectAsState()
     val savedRoutes by viewModel.savedRoutes.collectAsState()
     val scheduleConfig by viewModel.scheduleConfig.collectAsState()
@@ -69,6 +73,7 @@ fun SettingsScreen(viewModel: WalkViewModel, onRequestHcPermission: () -> Unit) 
     var hasLocation by remember { mutableStateOf(checkLocationPermission(context)) }
     var hasNotification by remember { mutableStateOf(checkNotificationPermission(context)) }
     var canScheduleExact by remember { mutableStateOf(ScheduleManager.canScheduleExact(context)) }
+    var hasBackgroundLocation by remember { mutableStateOf(checkBackgroundLocationPermission(context)) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -79,6 +84,7 @@ fun SettingsScreen(viewModel: WalkViewModel, onRequestHcPermission: () -> Unit) 
                 hasLocation = checkLocationPermission(context)
                 hasNotification = checkNotificationPermission(context)
                 canScheduleExact = ScheduleManager.canScheduleExact(context)
+                hasBackgroundLocation = checkBackgroundLocationPermission(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -216,12 +222,14 @@ fun SettingsScreen(viewModel: WalkViewModel, onRequestHcPermission: () -> Unit) 
                 config = scheduleConfig,
                 savedRoutes = savedRoutes,
                 canScheduleExact = canScheduleExact,
+                hasBackgroundLocation = hasBackgroundLocation,
                 onUpdate = viewModel::updateSchedule,
                 onRequestExactAlarmPermission = {
                     launchIntent(context, Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
                         data = Uri.parse("package:${context.packageName}")
                     })
-                }
+                },
+                onRequestBackgroundLocation = onRequestBackgroundLocation
             )
         }
 
@@ -275,6 +283,13 @@ private fun checkLocationPermission(context: Context): Boolean =
     ContextCompat.checkSelfPermission(
         context, Manifest.permission.ACCESS_FINE_LOCATION
     ) == PackageManager.PERMISSION_GRANTED
+
+private fun checkBackgroundLocationPermission(context: Context): Boolean =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+        ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+    else true // pre-Q grants background access as part of the regular location permission
 
 private fun checkNotificationPermission(context: Context): Boolean =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
@@ -424,8 +439,10 @@ private fun ScheduleContent(
     config: ScheduleConfig,
     savedRoutes: List<SavedRoute>,
     canScheduleExact: Boolean,
+    hasBackgroundLocation: Boolean,
     onUpdate: (enabled: Boolean, hour: Int, minute: Int, routeId: String?) -> Unit,
-    onRequestExactAlarmPermission: () -> Unit
+    onRequestExactAlarmPermission: () -> Unit,
+    onRequestBackgroundLocation: () -> Unit
 ) {
     val context = LocalContext.current
 
@@ -529,6 +546,35 @@ private fun ScheduleContent(
             Column(modifier = Modifier.weight(1f)) {
                 Text("尚未取得精確鬧鐘權限，排程時間可能會有誤差", fontSize = 12.sp, color = Color(0xFF6D4C00))
                 TextButton(onClick = onRequestExactAlarmPermission, contentPadding = PaddingValues(0.dp)) {
+                    Text("前往授權", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = ForestGreen)
+                }
+            }
+        }
+    }
+
+    if (!hasBackgroundLocation) {
+        Spacer(Modifier.height(4.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFFFFF3E0))
+                .padding(horizontal = 10.dp, vertical = 9.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(
+                Icons.Default.WarningAmber, null,
+                modifier = Modifier.size(15.dp).padding(top = 1.dp),
+                tint = Color(0xFFF57C00)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "尚未取得背景定位權限，時間到時若手機閒置較久，自動開始可能會失敗\n" +
+                        "（手動在地圖頁按開始不受影響，只有這個排程功能需要）",
+                    fontSize = 12.sp, lineHeight = 16.sp, color = Color(0xFF6D4C00)
+                )
+                TextButton(onClick = onRequestBackgroundLocation, contentPadding = PaddingValues(0.dp)) {
                     Text("前往授權", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = ForestGreen)
                 }
             }

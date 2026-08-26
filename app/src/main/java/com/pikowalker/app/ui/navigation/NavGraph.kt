@@ -29,7 +29,8 @@ val bottomNavItems = listOf(Screen.Map, Screen.Stats, Screen.Settings)
 @Composable
 fun PikoWalkerNavGraph(
     viewModel: WalkViewModel,
-    onRequestHcPermission: () -> Unit
+    onRequestHcPermission: () -> Unit,
+    onRequestBackgroundLocation: () -> Unit
 ) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -81,7 +82,7 @@ fun PikoWalkerNavGraph(
                 StatsScreen(viewModel)
             }
             composable(Screen.Settings.route) {
-                SettingsScreen(viewModel, onRequestHcPermission)
+                SettingsScreen(viewModel, onRequestHcPermission, onRequestBackgroundLocation)
             }
         }
     }

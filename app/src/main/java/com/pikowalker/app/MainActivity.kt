@@ -63,6 +63,16 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    // Background location — only ever launched from a user tap on the 設定 screen (see
+    // requestBackgroundLocationPermission below), never on startup alongside the other
+    // permissions. Android requires it be requested on its own, after foreground location is
+    // already granted, or the system silently denies it. No result handling needed here —
+    // SettingsScreen re-checks the permission itself on every onResume, which this dialog's
+    // dismissal always triggers.
+    private val bgLocationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         DebugLogger.log("Activity", "onCreate savedInstanceState=${savedInstanceState != null} task=${taskId}")
@@ -75,7 +85,8 @@ class MainActivity : ComponentActivity() {
                 if (permissionsGranted) {
                     PikoWalkerNavGraph(
                         viewModel,
-                        onRequestHcPermission = { requestHcPermission() }
+                        onRequestHcPermission = { requestHcPermission() },
+                        onRequestBackgroundLocation = { requestBackgroundLocationPermission() }
                     )
                 } else {
                     PermissionScreen(onRequest = { permissionLauncher.launch(requiredPermissions) })
@@ -296,6 +307,10 @@ class MainActivity : ComponentActivity() {
 
     fun requestHcPermission() {
         hcPermissionLauncher.launch(HealthConnectHelper.PERMISSIONS)
+    }
+
+    fun requestBackgroundLocationPermission() {
+        bgLocationPermissionLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
     }
 }
 

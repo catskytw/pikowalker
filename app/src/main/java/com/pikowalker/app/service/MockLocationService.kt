@@ -143,6 +143,13 @@ class MockLocationService : Service() {
                 return START_STICKY
             }
             ACTION_START_ROUTE -> {
+                // Every startForegroundService() call — even one aimed at a service that's
+                // already in the foreground — arms an OS timer requiring a startForeground()
+                // call back within a few seconds, or the whole process gets killed with
+                // ForegroundServiceDidNotStartInTimeException (a hard crash as of Android 15).
+                // Called unconditionally, ahead of the early-returns below, so a stale/racy
+                // isSimulating read can't leave that timer unanswered.
+                startForegroundCompat()
                 val state = repo.currentState
                 // Fake GPS must already be on — this action never turns it on or off itself.
                 if (!state.isSimulating || state.waypoints.size < 2) return START_NOT_STICKY
@@ -161,6 +168,9 @@ class MockLocationService : Service() {
                 return START_STICKY
             }
             ACTION_RESUME_ROUTE -> {
+                // Same reasoning as ACTION_START_ROUTE above — this also arrives via
+                // startForegroundService().
+                startForegroundCompat()
                 val state = repo.currentState
                 if (!state.isSimulating || state.waypoints.size < 2 || state.isWalkingRoute) return START_NOT_STICKY
                 loopJob?.cancel()

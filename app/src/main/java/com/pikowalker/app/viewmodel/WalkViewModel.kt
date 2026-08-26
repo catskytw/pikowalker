@@ -124,6 +124,16 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Dragging the avatar marker itself, unlike a tap elsewhere on the map, always means
+     *  "move fake GPS here right now" — even in path mode, where a tap instead plans a new
+     *  waypoint. This is what lets dragging reach a point too close to the avatar for a plain
+     *  tap to land on cleanly. Ignored while actively walking a route, same as [tapMap]. */
+    fun repositionAvatar(lat: Double, lng: Double) {
+        val state = repo.currentState
+        if (state.isWalkingRoute) return
+        if (state.isPathMode) holdAt(lat, lng) else tapMap(lat, lng)
+    }
+
     /** Collapses the waypoint list down to wherever fake GPS currently is (even mid-walk),
      *  stopping any in-progress route walk first. Fake GPS itself stays on. */
     private fun collapseToCurrentPosition() {

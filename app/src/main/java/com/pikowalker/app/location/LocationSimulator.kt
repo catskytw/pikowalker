@@ -203,7 +203,18 @@ class LocationSimulator(private val context: Context) {
     }
 
     /** Advances one tick along the waypoint path. Returns true the instant STOP_AT_END reaches
-     *  the final point (a one-time transition event the caller should react to). */
+     *  the final point (a one-time transition event the caller should react to).
+     *
+     *  The per-tick movement budget can exceed the distance to the next waypoint — at 60km/h
+     *  that's ~16.7m per tick, easily bigger than the 3m arrival threshold whenever two waypoints
+     *  sit close together (a tight corner, in particular). The old code moved by straight-line
+     *  extrapolation toward the target regardless of that, which overshoots past it instead of
+     *  landing on it; the very next tick then finds the (now-passed) target behind it and heads
+     *  back, overshooting the other way — an oscillation that can persist indefinitely without
+     *  ever satisfying the arrival check, which looked like getting stuck exactly at a corner.
+     *  Lower speeds rarely overshoot far enough to trigger it, which is why it only reproduced at
+     *  higher speed. Fixed by consuming the movement budget across as many waypoints as it
+     *  actually covers this tick, landing exactly on each one crossed rather than past it. */
     @Synchronized
     fun tick(speedKmh: Double, loopMode: WaypointLoopMode): Boolean {
         if (!gpsProviderAdded || wpList.size < 2 || reachedEnd) {
@@ -216,50 +227,65 @@ class LocationSimulator(private val context: Context) {
         val oldLat = wpLat
         val oldLng = wpLng
         val speedMs = speedKmh / 3.6
-        val target = wpList[wpIndex]
-        val dist = distMeters(wpLat, wpLng, target.first, target.second)
         var justReachedEnd = false
         // Small per-tick pace variation — a perfectly constant speed is itself an anomaly
         // signal, real walking pace naturally wobbles a few percent tick to tick.
         val tickSpeedMs = speedMs * (1.0 + rng.nextDouble(-0.08, 0.08))
+        var remainingM = tickSpeedMs
 
-        if (dist < 3.0) {
-            when (loopMode) {
-                WaypointLoopMode.PING_PONG -> {
-                    if (wpForward) {
+        // Bounded well above anything a real route needs, purely so a degenerate route (e.g.
+        // every waypoint at the same coordinate, in LOOP mode) can't spin this forever — with
+        // zero-distance hops never consuming the budget, the loop's own end condition alone
+        // wouldn't stop it.
+        var guard = wpList.size * 4 + 16
+        while (remainingM > 0.0 && !reachedEnd && guard-- > 0) {
+            val target = wpList[wpIndex]
+            val dist = distMeters(wpLat, wpLng, target.first, target.second)
+
+            if (dist <= remainingM) {
+                // This tick's budget reaches (or exactly covers) the target — land on it exactly
+                // and advance, carrying over whatever's left toward the next leg.
+                wpLat = target.first; wpLng = target.second
+                remainingM -= dist
+                when (loopMode) {
+                    WaypointLoopMode.PING_PONG -> {
+                        if (wpForward) {
+                            if (wpIndex < wpList.size - 1) {
+                                wpIndex++
+                            } else {
+                                wpIndex = (wpList.size - 2).coerceAtLeast(0)
+                                wpForward = false
+                            }
+                        } else {
+                            if (wpIndex > 0) {
+                                wpIndex--
+                            } else {
+                                wpIndex = 1.coerceAtMost(wpList.size - 1)
+                                wpForward = true
+                            }
+                        }
+                    }
+                    WaypointLoopMode.LOOP -> {
+                        wpIndex = (wpIndex + 1) % wpList.size
+                    }
+                    WaypointLoopMode.STOP_AT_END -> {
                         if (wpIndex < wpList.size - 1) {
                             wpIndex++
                         } else {
-                            wpIndex = (wpList.size - 2).coerceAtLeast(0)
-                            wpForward = false
-                        }
-                    } else {
-                        if (wpIndex > 0) {
-                            wpIndex--
-                        } else {
-                            wpIndex = 1.coerceAtMost(wpList.size - 1)
-                            wpForward = true
+                            reachedEnd = true
+                            justReachedEnd = true
                         }
                     }
                 }
-                WaypointLoopMode.LOOP -> {
-                    wpIndex = (wpIndex + 1) % wpList.size
-                }
-                WaypointLoopMode.STOP_AT_END -> {
-                    if (wpIndex < wpList.size - 1) {
-                        wpIndex++
-                    } else {
-                        reachedEnd = true
-                        justReachedEnd = true
-                    }
-                }
+            } else {
+                // Won't reach the target this tick — move the remaining budget straight toward it.
+                val dLatM = (target.first - wpLat) * 111_320.0
+                val dLngM = (target.second - wpLng) * 111_320.0 * cos(Math.toRadians(wpLat))
+                val scale = remainingM / dist
+                wpLat += metersToLat(dLatM * scale)
+                wpLng += metersToLng(dLngM * scale, wpLat)
+                remainingM = 0.0
             }
-        } else {
-            val dLatM = (target.first - wpLat) * 111_320.0
-            val dLngM = (target.second - wpLng) * 111_320.0 * cos(Math.toRadians(wpLat))
-            val scale = tickSpeedMs / dist
-            wpLat += metersToLat(dLatM * scale)
-            wpLng += metersToLng(dLngM * scale, wpLat)
         }
 
         val headingTarget = wpList[wpIndex]

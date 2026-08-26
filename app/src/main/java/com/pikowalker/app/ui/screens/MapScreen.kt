@@ -9,6 +9,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -32,6 +33,8 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -42,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -73,6 +77,7 @@ import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.JointType
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.MapStyleOptions
+import com.google.maps.android.compose.DragState
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapUiSettings
@@ -296,19 +301,53 @@ fun MapScreen(viewModel: WalkViewModel) {
                 }
 
                 userLocation?.let { pos ->
+                    // The avatar can't be made to ignore taps that land on it (Marker always has
+                    // some minimum touch target, regardless of icon size), so instead of fighting
+                    // that, it's embraced: dragging the avatar itself nudges fake GPS to wherever
+                    // it's dropped, for exactly the case a plain tap can't reach — a new point
+                    // very close to the current one. A tap elsewhere on the map still works via
+                    // onMapClick above for jumping somewhere further away.
+                    val avatarMarkerState = remember(pos) { MarkerState(position = pos) }
+                    val bearingMarkerState = remember(pos) { MarkerState(position = pos) }
+                    // Mirrors the avatar's position live, including every intermediate point
+                    // during an in-progress drag — not just the final drop — so the arrow doesn't
+                    // visibly lag behind while dragging.
+                    LaunchedEffect(avatarMarkerState.position) {
+                        bearingMarkerState.position = avatarMarkerState.position
+                    }
+                    LaunchedEffect(avatarMarkerState.dragState) {
+                        if (avatarMarkerState.dragState == DragState.END) {
+                            val dropped = avatarMarkerState.position
+                            searchResult = null
+                            searchCandidates = emptyList()
+                            viewModel.repositionAvatar(dropped.latitude, dropped.longitude)
+                        }
+                    }
+                    // onClick just returns true so Google Maps skips its default behavior
+                    // (panning the camera to center on the marker) — neither marker has any
+                    // other function of its own to tap.
+                    val noOpClick = { true }
+                    // A held static point (including one just dropped by dragging the avatar)
+                    // has no direction of travel, so there's nothing meaningful for the arrow to
+                    // point — only shown while actually walking a route.
+                    if (state.isWalkingRoute) {
+                        Marker(
+                            state = bearingMarkerState,
+                            icon = BitmapDescriptorFactory.fromBitmap(bearingBitmap),
+                            anchor = Offset(0.5f, 1f),
+                            rotation = userBearing,
+                            flat = true,
+                            zIndex = 1f,
+                            onClick = { noOpClick() }
+                        )
+                    }
                     Marker(
-                        state = remember(pos) { MarkerState(position = pos) },
-                        icon = BitmapDescriptorFactory.fromBitmap(bearingBitmap),
-                        anchor = Offset(0.5f, 0.5f),
-                        rotation = userBearing,
-                        flat = true,
-                        zIndex = 1f
-                    )
-                    Marker(
-                        state = remember(pos) { MarkerState(position = pos) },
+                        state = avatarMarkerState,
                         icon = BitmapDescriptorFactory.fromBitmap(userLocationBitmap),
                         anchor = Offset(0.5f, 0.5f),
-                        zIndex = 1f
+                        zIndex = 1f,
+                        draggable = true,
+                        onClick = { noOpClick() }
                     )
                 }
             }
@@ -1590,10 +1629,14 @@ private suspend fun getFreshLocation(context: android.content.Context): android.
     }
 }
 
-/** Direction arrow. The marker is center-anchored (see the Marker call site above), rotating
- *  around the exact point the avatar sits at — the bitmap itself is built symmetric around its
- *  vertical midpoint (arrow drawn in the top half, bottom half left blank) so the visible
- *  arrowhead orbits just outside the 52dp avatar ring instead of sitting underneath it. */
+/** Direction arrow — bottom-anchored (see the Marker call site above) directly at the avatar's
+ *  position, so it rotates around that exact point and the arrowhead swings around just outside
+ *  the 52dp avatar ring. (An earlier osmdroid version padded this bitmap to be symmetric around
+ *  its own center instead, to sidestep some ambiguity in exactly what osmdroid rotated a marker
+ *  around — Google Maps' anchor-based rotation has no such ambiguity, and that padding was pure
+ *  transparent tap-target bloat: it made the marker's clickable bounding box roughly 2x taller
+ *  than the visible arrow, which is what was silently swallowing taps meant for the map itself
+ *  whenever they landed anywhere near the avatar.) */
 private fun bearingIndicatorBitmap(context: android.content.Context): Bitmap {
     val dp          = context.resources.displayMetrics.density
     val avatarR     = 26 * dp   // half of the 52dp avatar badge
@@ -1601,9 +1644,8 @@ private fun bearingIndicatorBitmap(context: android.content.Context): Bitmap {
     val arrowWidth  = 22 * dp
     val gap         = 0.5f * dp // small breathing room between ring edge and arrowhead
 
-    val halfH = avatarR + gap + arrowLength
     val w = arrowWidth.toInt()
-    val h = (halfH * 2).toInt()
+    val h = (avatarR + gap + arrowLength).toInt()
     val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val cv  = Canvas(bmp)
     val p   = Paint(Paint.ANTI_ALIAS_FLAG)

@@ -87,8 +87,6 @@ import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import kotlin.math.*
 
-private const val MAX_PINS = 20
-
 // Switching tabs disposes and recreates MapScreen's whole composition — a plain remember{}
 // zoom var would reset every time. Holding it at the file/object level instead survives that,
 // so leaving 地圖 and coming back keeps whatever zoom the user had.
@@ -285,8 +283,11 @@ fun MapScreen(viewModel: WalkViewModel) {
 
                 state.waypoints.forEachIndexed { i, wp ->
                     val markerState = remember(wp.lat, wp.lng) { MarkerState(position = LatLng(wp.lat, wp.lng)) }
+                    // No cap here — the waypoint list panel below numbers every point with no
+                    // limit, and a route past 20 points used to show every pin past #20 as a
+                    // duplicate "20", which read as broken rather than just a big route.
                     val icon = remember(i, state.waypoints.size) {
-                        BitmapDescriptorFactory.fromBitmap(createPinBitmap((i + 1).coerceAtMost(MAX_PINS)))
+                        BitmapDescriptorFactory.fromBitmap(createPinBitmap(i + 1))
                     }
                     Marker(state = markerState, icon = icon, anchor = Offset(0.5f, 1f), zIndex = 0f)
                 }
@@ -1737,7 +1738,11 @@ private fun createPinBitmap(number: Int): Bitmap {
     p.color = android.graphics.Color.parseColor("#E05A2B")
     p.textAlign = Paint.Align.CENTER
     p.typeface  = Typeface.DEFAULT_BOLD
-    p.textSize  = r * (if (number > 9) 0.68f else 0.84f)
+    p.textSize  = r * when {
+        number > 99 -> 0.52f
+        number > 9  -> 0.68f
+        else        -> 0.84f
+    }
     val fm   = p.fontMetrics
     val txtY = cy - (fm.ascent + fm.descent) / 2f
     cv.drawText(number.toString(), cx, txtY, p)

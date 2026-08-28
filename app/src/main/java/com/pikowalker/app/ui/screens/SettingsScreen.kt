@@ -69,7 +69,7 @@ fun SettingsScreen(
     // Re-checked on every resume (not just first composition) — these can change out from
     // under the app via system Settings while the user is on this screen.
     var batteryExempt by remember { mutableStateOf(pm.isIgnoringBatteryOptimizations(context.packageName)) }
-    var isMockLocationApp by remember { mutableStateOf(checkIsMockLocationApp(context)) }
+    var isMockLocationApp by remember { mutableStateOf(checkIsMockLocationApp(context, state.isSimulating)) }
     var hasLocation by remember { mutableStateOf(checkLocationPermission(context)) }
     var hasNotification by remember { mutableStateOf(checkNotificationPermission(context)) }
     var canScheduleExact by remember { mutableStateOf(ScheduleManager.canScheduleExact(context)) }
@@ -80,7 +80,7 @@ fun SettingsScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 batteryExempt = pm.isIgnoringBatteryOptimizations(context.packageName)
-                isMockLocationApp = checkIsMockLocationApp(context)
+                isMockLocationApp = checkIsMockLocationApp(context, state.isSimulating)
                 hasLocation = checkLocationPermission(context)
                 hasNotification = checkNotificationPermission(context)
                 canScheduleExact = ScheduleManager.canScheduleExact(context)
@@ -779,7 +779,15 @@ private fun StatusBadge(text: String, textColor: Color, bgColor: Color) {
 }
 
 @SuppressLint("MissingPermission")
-private fun checkIsMockLocationApp(context: Context): Boolean {
+private fun checkIsMockLocationApp(context: Context, isSimulating: Boolean): Boolean {
+    // Already proven — LocationSimulator.start() only reports success once it has actually
+    // registered as the mock GPS provider, so a running session is its own evidence. Skip the
+    // probe below entirely in that case: addTestProvider() on a provider name we've already
+    // registered succeeds silently (no exception), so the removeTestProvider() right after it
+    // would tear down the provider LocationSimulator is actively feeding — showing up to the
+    // user as GPS briefly jumping/dropping out every time they open 設定 (or export a debug
+    // log) mid-walk, until LocationSimulator's own retry logic re-registers it a moment later.
+    if (isSimulating) return true
     val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
     return try {
         lm.addTestProvider(

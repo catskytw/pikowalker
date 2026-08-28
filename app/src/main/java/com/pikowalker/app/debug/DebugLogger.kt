@@ -129,14 +129,21 @@ object DebugLogger {
         else true
         val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         val batteryExempt = pm?.isIgnoringBatteryOptimizations(context.packageName) ?: false
-        val isMockLocationApp = checkIsMockLocationApp(context)
+        val isSimulating = (context.applicationContext as? com.pikowalker.app.PikStepApp)
+            ?.walkRepository?.currentState?.isSimulating == true
+        val isMockLocationApp = checkIsMockLocationApp(context, isSimulating)
         val canScheduleExact = ScheduleManager.canScheduleExact(context)
         return "位置權限=$hasLocation 通知權限=$hasNotification 虛擬位置應用程式=$isMockLocationApp " +
             "電池最佳化排除=$batteryExempt 精確鬧鐘=$canScheduleExact"
     }
 
+    // See the identical guard in SettingsScreen.kt's copy of this function for why: probing via
+    // addTestProvider()+removeTestProvider() while a session is already running tears down the
+    // provider LocationSimulator is actively feeding, which reads to the user as GPS briefly
+    // jumping/dropping — exactly what exporting a debug log mid-walk would otherwise cause.
     @SuppressLint("MissingPermission")
-    private fun checkIsMockLocationApp(context: Context): Boolean {
+    private fun checkIsMockLocationApp(context: Context, isSimulating: Boolean): Boolean {
+        if (isSimulating) return true
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return false
         return try {
             lm.addTestProvider(

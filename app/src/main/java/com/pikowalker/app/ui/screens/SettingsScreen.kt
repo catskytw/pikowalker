@@ -61,6 +61,9 @@ fun SettingsScreen(
     val savedRoutes by viewModel.savedRoutes.collectAsState()
     val scheduleConfig by viewModel.scheduleConfig.collectAsState()
     val todaySteps by viewModel.todaySteps.collectAsState()
+    val pureSpotUpdating by viewModel.pureSpotUpdating.collectAsState()
+    val pureSpotUpdateResult by viewModel.pureSpotUpdateResult.collectAsState()
+    val pureSpotLastUpdatedMs by viewModel.pureSpotLastUpdatedMs.collectAsState()
     val context = LocalContext.current
 
     LaunchedEffect(Unit) { viewModel.refreshTodaySteps() }
@@ -230,6 +233,18 @@ fun SettingsScreen(
                     })
                 },
                 onRequestBackgroundLocation = onRequestBackgroundLocation
+            )
+        }
+
+        // ── 純點資料 ──────────────────────────────────────────────────────────
+        SettingSection(title = "純點資料") {
+            PureSpotUpdateContent(
+                lastUpdatedMs = pureSpotLastUpdatedMs,
+                updating = pureSpotUpdating,
+                updateResult = pureSpotUpdateResult,
+                canUpdate = remember(pureSpotLastUpdatedMs) { viewModel.canUpdatePureSpots() },
+                onUpdate = { viewModel.refreshPureSpots() },
+                onDismissResult = { viewModel.dismissPureSpotUpdateResult() }
             )
         }
 
@@ -578,6 +593,101 @@ private fun ScheduleContent(
                     Text("前往授權", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = ForestGreen)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PureSpotUpdateContent(
+    lastUpdatedMs: Long,
+    updating: Boolean,
+    updateResult: String?,
+    canUpdate: Boolean,
+    onUpdate: () -> Unit,
+    onDismissResult: () -> Unit
+) {
+    val statusText = if (lastUpdatedMs == 0L) {
+        "目前使用內建版本，尚未更新過"
+    } else {
+        val date = remember(lastUpdatedMs) {
+            java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.TAIWAN)
+                .format(java.util.Date(lastUpdatedMs))
+        }
+        "上次更新於 $date"
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(ForestGreen.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Default.Sync, null, modifier = Modifier.size(20.dp), tint = ForestGreen)
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text("純點資料庫", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1A1A1A))
+            Text(statusText, fontSize = 12.sp, color = Color(0xFF757575))
+        }
+        Spacer(Modifier.width(12.dp))
+        if (updating) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = ForestGreen)
+        } else {
+            Button(
+                onClick = onUpdate,
+                enabled = canUpdate,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.heightIn(min = 32.dp),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = ForestGreen, contentColor = Color.White,
+                    disabledContainerColor = Color(0xFFE0E0E0), disabledContentColor = Color(0xFF9E9E9E)
+                )
+            ) {
+                Text("更新", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+
+    if (!canUpdate && !updating) {
+        val daysLeft = remember(lastUpdatedMs) {
+            val cooldownMs = 7L * 24 * 60 * 60 * 1000L
+            val remainMs = cooldownMs - (System.currentTimeMillis() - lastUpdatedMs)
+            kotlin.math.ceil(remainMs / (24.0 * 60 * 60 * 1000)).toInt().coerceAtLeast(1)
+        }
+        Text(
+            "還要等 $daysLeft 天才能再次更新",
+            fontSize = 11.sp, color = StoneGray,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+    }
+
+    updateResult?.let { msg ->
+        val isError = msg.startsWith("更新失敗")
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (isError) Color(0xFFFDECEA) else Color(0xFFE8F5E9))
+                .padding(horizontal = 10.dp, vertical = 9.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                msg, fontSize = 12.sp,
+                color = if (isError) Color(0xFFC62828) else ForestGreenDark,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                Icons.Default.Close, "關閉",
+                modifier = Modifier.size(14.dp).clickable { onDismissResult() },
+                tint = StoneGray
+            )
         }
     }
 }

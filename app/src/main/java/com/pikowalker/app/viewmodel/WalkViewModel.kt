@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pikowalker.app.PikStepApp
 import com.pikowalker.app.RouteRepository
+import com.pikowalker.app.debug.DebugLogger
 import com.pikowalker.app.health.HealthConnectHelper
 import com.pikowalker.app.model.GeoPoint
 import com.pikowalker.app.model.PureSpot
@@ -48,6 +49,47 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
             _pureSpots.value = pureSpotRepo.loadAll()
             _pureSpotsLoading.value = false
         }
+    }
+
+    private val _pureSpotUpdating = MutableStateFlow(false)
+    val pureSpotUpdating: StateFlow<Boolean> = _pureSpotUpdating.asStateFlow()
+    private val _pureSpotUpdateResult = MutableStateFlow<String?>(null)
+    val pureSpotUpdateResult: StateFlow<String?> = _pureSpotUpdateResult.asStateFlow()
+    private val _pureSpotLastUpdatedMs = MutableStateFlow(pureSpotRepo.lastUpdatedAtMs())
+    val pureSpotLastUpdatedMs: StateFlow<Long> = _pureSpotLastUpdatedMs.asStateFlow()
+
+    fun canUpdatePureSpots(): Boolean = pureSpotRepo.canUpdateNow()
+
+    /** 設定 → 純點資料 → 更新, user-triggered only — never called automatically (on launch, on
+     *  schedule, etc.), so a person who never taps it never makes a network request this feature
+     *  doesn't strictly need. Gated by [canUpdatePureSpots] both here and at the call site so a
+     *  stale button press during the cooldown window is a silent no-op rather than a wasted
+     *  fetch. */
+    fun refreshPureSpots() {
+        if (_pureSpotUpdating.value || !pureSpotRepo.canUpdateNow()) return
+        _pureSpotUpdating.value = true
+        _pureSpotUpdateResult.value = null
+        DebugLogger.log("PureSpot", "開始從網路更新純點資料")
+        viewModelScope.launch {
+            pureSpotRepo.refreshFromNetwork()
+                .onSuccess { result ->
+                    _pureSpots.value = pureSpotRepo.loadAll()
+                    _pureSpotLastUpdatedMs.value = pureSpotRepo.lastUpdatedAtMs()
+                    _pureSpotUpdateResult.value = "已更新，共 ${result.totalCount} 筆純點"
+                    // Per-source breakdown stays in the debug log only — useful for diagnosing a
+                    // partial failure later, not something the user needs on screen every time.
+                    DebugLogger.log("PureSpot", "更新成功：$result")
+                }
+                .onFailure { e ->
+                    _pureSpotUpdateResult.value = "更新失敗：${e.message ?: "請確認網路連線後再試一次"}"
+                    DebugLogger.log("PureSpot", "更新失敗：$e")
+                }
+            _pureSpotUpdating.value = false
+        }
+    }
+
+    fun dismissPureSpotUpdateResult() {
+        _pureSpotUpdateResult.value = null
     }
 
     // Held here rather than as local Composable state in PureSpotScreen — switching bottom nav

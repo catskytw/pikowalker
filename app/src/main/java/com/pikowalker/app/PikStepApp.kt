@@ -14,6 +14,7 @@ class PikStepApp : Application() {
     val walkRepository = WalkRepository()
     val routeRepository: RouteRepository by lazy { RouteRepository(this) }
     val scheduleRepository: ScheduleRepository by lazy { ScheduleRepository(this) }
+    val pureSpotRepository: PureSpotRepository by lazy { PureSpotRepository(this) }
 
     override fun onCreate() {
         super.onCreate()

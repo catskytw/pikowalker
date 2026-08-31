@@ -14,17 +14,19 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.pikowalker.app.ui.screens.MapScreen
+import com.pikowalker.app.ui.screens.PureSpotScreen
 import com.pikowalker.app.ui.screens.SettingsScreen
 import com.pikowalker.app.ui.screens.StatsScreen
 import com.pikowalker.app.viewmodel.WalkViewModel
 
 sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
-    object Map      : Screen("map",      "地圖", Icons.Filled.Map)
-    object Stats    : Screen("stats",    "統計", Icons.Filled.BarChart)
-    object Settings : Screen("settings", "設定", Icons.Filled.Settings)
+    object Map       : Screen("map",       "地圖", Icons.Filled.Map)
+    object PureSpots : Screen("purespots", "純點", Icons.Filled.PinDrop)
+    object Stats     : Screen("stats",     "統計", Icons.Filled.BarChart)
+    object Settings  : Screen("settings",  "設定", Icons.Filled.Settings)
 }
 
-val bottomNavItems = listOf(Screen.Map, Screen.Stats, Screen.Settings)
+val bottomNavItems = listOf(Screen.Map, Screen.PureSpots, Screen.Stats, Screen.Settings)
 
 @Composable
 fun PikoWalkerNavGraph(
@@ -77,6 +79,18 @@ fun PikoWalkerNavGraph(
         ) {
             composable(Screen.Map.route) {
                 MapScreen(viewModel)
+            }
+            composable(Screen.PureSpots.route) {
+                PureSpotScreen(
+                    viewModel,
+                    onNavigateToMap = {
+                        navController.navigate(Screen.Map.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
+                )
             }
             composable(Screen.Stats.route) {
                 StatsScreen(viewModel)

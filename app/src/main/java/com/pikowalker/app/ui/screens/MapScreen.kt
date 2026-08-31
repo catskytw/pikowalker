@@ -206,15 +206,26 @@ fun MapScreen(viewModel: WalkViewModel) {
         }
     }
 
-    // A coordinate handed to us by another app (e.g. opening a Pikmin Bloom flower/mushroom's
-    // geo: link with PikoWalker). Treated exactly like a search result — just a pin to confirm
-    // via 設為模擬點, never moves fake GPS on its own.
+    // A coordinate handed to us by another app (geo: link) or another screen (純點's 去此點) —
+    // treated like a search result: just a pin to confirm via 設為模擬點, never moves fake GPS
+    // on its own. Deliberately doesn't copy the point into local `searchResult` state or consume
+    // it here — a deep link often arrives while MapScreen isn't even the visible tab yet, and the
+    // navigation this same value triggers (see PikoWalkerNavGraph) can compose-then-dispose a
+    // throwaway instance of this screen before the real one settles. Copying into ephemeral local
+    // state and consuming immediately meant that throwaway instance could eat the pending point
+    // and reset `searchResult` back to null before the user ever saw it — camera flew there, but
+    // no pin. Rendering directly off `pendingDeepLinkPoint` (see `displayResult` below) instead
+    // survives any number of disposals since it lives in the ViewModel, not this composition.
     LaunchedEffect(pendingDeepLinkPoint) {
         val point = pendingDeepLinkPoint ?: return@LaunchedEffect
         flyTo(point.lat, point.lng)
-        searchResult = point
         searchCandidates = emptyList()
-        viewModel.consumeDeepLinkPoint()
+    }
+
+    // pendingDeepLinkPoint takes priority — it's the more recently, externally driven request.
+    val displayResult = pendingDeepLinkPoint ?: searchResult
+    fun clearDisplayResult() {
+        if (pendingDeepLinkPoint != null) viewModel.consumeDeepLinkPoint() else searchResult = null
     }
 
     // Update user-location icon + animate camera while statically holding
@@ -259,7 +270,7 @@ fun MapScreen(viewModel: WalkViewModel) {
                 properties = mapProperties,
                 uiSettings = mapUiSettings,
                 onMapClick = { latLng ->
-                    searchResult = null
+                    clearDisplayResult()
                     searchCandidates = emptyList()
                     viewModel.tapMap(latLng.latitude, latLng.longitude)
                 }
@@ -292,7 +303,7 @@ fun MapScreen(viewModel: WalkViewModel) {
                     Marker(state = markerState, icon = icon, anchor = Offset(0.5f, 1f), zIndex = 0f)
                 }
 
-                searchResult?.let { result ->
+                displayResult?.let { result ->
                     Marker(
                         state = remember(result) { MarkerState(position = LatLng(result.lat, result.lng)) },
                         icon = BitmapDescriptorFactory.fromBitmap(searchPinBitmap),
@@ -405,15 +416,15 @@ fun MapScreen(viewModel: WalkViewModel) {
                         onDismiss = { searchCandidates = emptyList() }
                     )
                 }
-                searchResult?.let { result ->
+                displayResult?.let { result ->
                     SearchResultBar(
                         result = result,
                         enabled = !state.isWalkingRoute,
                         onUseAsPoint = {
                             viewModel.tapMap(result.lat, result.lng)
-                            searchResult = null
+                            clearDisplayResult()
                         },
-                        onDismiss = { searchResult = null }
+                        onDismiss = { clearDisplayResult() }
                     )
                 }
                 if (resolvingSharedLink) {

@@ -7,6 +7,8 @@ import com.pikowalker.app.PikStepApp
 import com.pikowalker.app.RouteRepository
 import com.pikowalker.app.health.HealthConnectHelper
 import com.pikowalker.app.model.GeoPoint
+import com.pikowalker.app.model.PureSpot
+import com.pikowalker.app.model.PureSpotFilters
 import com.pikowalker.app.model.SavedRoute
 import com.pikowalker.app.model.ScheduleConfig
 import com.pikowalker.app.model.WalkState
@@ -21,14 +23,55 @@ import kotlinx.coroutines.launch
 
 class WalkViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repo         = (application as PikStepApp).walkRepository
-    private val routeRepo    = (application as PikStepApp).routeRepository
-    private val scheduleRepo = (application as PikStepApp).scheduleRepository
+    private val repo          = (application as PikStepApp).walkRepository
+    private val routeRepo     = (application as PikStepApp).routeRepository
+    private val scheduleRepo  = (application as PikStepApp).scheduleRepository
+    private val pureSpotRepo  = (application as PikStepApp).pureSpotRepository
     private val healthConnectHelper = HealthConnectHelper(application)
 
     val walkState:      StateFlow<WalkState>        = repo.state
     val savedRoutes:     StateFlow<List<SavedRoute>> = routeRepo.routes
     val scheduleConfig: StateFlow<ScheduleConfig>    = scheduleRepo.config
+
+    private val _pureSpots = MutableStateFlow<List<PureSpot>>(emptyList())
+    val pureSpots: StateFlow<List<PureSpot>> = _pureSpots.asStateFlow()
+    private val _pureSpotsLoading = MutableStateFlow(false)
+    val pureSpotsLoading: StateFlow<Boolean> = _pureSpotsLoading.asStateFlow()
+
+    /** Parses the bundled 純點 CSV on first visit to the 純點 tab only — no reason to pay for it
+     *  at app startup when most sessions may never open that screen. Safe to call repeatedly;
+     *  a load already in flight or already finished is a no-op. */
+    fun loadPureSpotsIfNeeded() {
+        if (_pureSpots.value.isNotEmpty() || _pureSpotsLoading.value) return
+        _pureSpotsLoading.value = true
+        viewModelScope.launch {
+            _pureSpots.value = pureSpotRepo.loadAll()
+            _pureSpotsLoading.value = false
+        }
+    }
+
+    // Held here rather than as local Composable state in PureSpotScreen — switching bottom nav
+    // tabs disposes and recreates that screen's whole composition, which would otherwise silently
+    // reset the search text and filters back to blank every time the user leaves and returns.
+    private val _pureSpotFilters = MutableStateFlow(PureSpotFilters())
+    val pureSpotFilters: StateFlow<PureSpotFilters> = _pureSpotFilters.asStateFlow()
+
+    fun setPureSpotSearchText(text: String) {
+        _pureSpotFilters.value = _pureSpotFilters.value.copy(searchText = text)
+    }
+
+    /** Picking a new city invalidates whatever district was chosen under the old one. */
+    fun setPureSpotCity(city: String?) {
+        _pureSpotFilters.value = _pureSpotFilters.value.copy(city = city, district = null)
+    }
+
+    fun setPureSpotDistrict(district: String?) {
+        _pureSpotFilters.value = _pureSpotFilters.value.copy(district = district)
+    }
+
+    fun setPureSpotType(type: String?) {
+        _pureSpotFilters.value = _pureSpotFilters.value.copy(type = type)
+    }
 
     /** Persists the daily auto-start schedule and arms/cancels the underlying alarm to match. */
     fun updateSchedule(enabled: Boolean, hour: Int, minute: Int, routeId: String?) {

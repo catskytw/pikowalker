@@ -29,7 +29,6 @@ class LocationSimulator(private val context: Context) {
     // Waypoint path state
     private var wpList: List<Pair<Double, Double>> = emptyList()
     private var wpIndex = 0
-    private var wpForward = true       // for PING_PONG direction
     private var reachedEnd = false     // true once STOP_AT_END has arrived at the final point
     private var wpLat = 25.0330
     private var wpLng = 121.5654
@@ -86,7 +85,6 @@ class LocationSimulator(private val context: Context) {
     fun setWaypoints(wps: List<Pair<Double, Double>>) {
         wpList = wps
         wpIndex = 0
-        wpForward = true
         reachedEnd = false
         if (wps.isNotEmpty()) {
             wpLat = wps[0].first; wpLng = wps[0].second
@@ -195,7 +193,7 @@ class LocationSimulator(private val context: Context) {
             } catch (e: Exception) { DebugLogger.log("Location", "stop() 清除 fused provider 失敗：$e") }
             fusedProviderAdded = false
         }
-        wpIndex = 0; wpForward = true; reachedEnd = false
+        wpIndex = 0; reachedEnd = false
         // Reset so a fresh session doesn't inherit a near-threshold streak from whatever the
         // previous session ended on — otherwise a handful of failures right after restarting
         // could immediately fire onPersistentFailure for a session that just began.
@@ -248,27 +246,12 @@ class LocationSimulator(private val context: Context) {
                 wpLat = target.first; wpLng = target.second
                 remainingM -= dist
                 when (loopMode) {
-                    WaypointLoopMode.PING_PONG -> {
-                        if (wpForward) {
-                            if (wpIndex < wpList.size - 1) {
-                                wpIndex++
-                            } else {
-                                wpIndex = (wpList.size - 2).coerceAtLeast(0)
-                                wpForward = false
-                            }
-                        } else {
-                            if (wpIndex > 0) {
-                                wpIndex--
-                            } else {
-                                wpIndex = 1.coerceAtMost(wpList.size - 1)
-                                wpForward = true
-                            }
-                        }
-                    }
                     WaypointLoopMode.LOOP -> {
                         wpIndex = (wpIndex + 1) % wpList.size
                     }
-                    WaypointLoopMode.STOP_AT_END -> {
+                    // PLANT_CIRCLES walks a path already expanded into circles (see FlowerCircle) —
+                    // by the time it gets here it's just a plain run-to-the-end polyline.
+                    WaypointLoopMode.STOP_AT_END, WaypointLoopMode.PLANT_CIRCLES -> {
                         if (wpIndex < wpList.size - 1) {
                             wpIndex++
                         } else {

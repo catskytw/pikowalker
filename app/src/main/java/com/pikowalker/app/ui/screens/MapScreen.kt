@@ -13,6 +13,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -37,6 +38,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
@@ -55,6 +57,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.pikowalker.app.geocoding.GeocodingRepository
 import com.pikowalker.app.RouteShareCodec
 import com.pikowalker.app.settings.AppSettings
+import com.pikowalker.app.location.FlowerCircle
 import com.pikowalker.app.model.GeoPoint
 import com.pikowalker.app.model.SavedRoute
 import com.pikowalker.app.model.WalkSpeed
@@ -77,6 +80,7 @@ import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.JointType
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.MapStyleOptions
+import com.google.maps.android.compose.Circle
 import com.google.maps.android.compose.DragState
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
@@ -280,8 +284,7 @@ fun MapScreen(viewModel: WalkViewModel) {
                         addAll(state.waypoints)
                         when (state.waypointLoopMode) {
                             WaypointLoopMode.LOOP -> add(state.waypoints[0])
-                            WaypointLoopMode.PING_PONG -> addAll(state.waypoints.asReversed().drop(1))
-                            WaypointLoopMode.STOP_AT_END -> {}
+                            WaypointLoopMode.STOP_AT_END, WaypointLoopMode.PLANT_CIRCLES -> {}
                         }
                     }
                     Polyline(
@@ -290,6 +293,19 @@ fun MapScreen(viewModel: WalkViewModel) {
                         width = routeWidthPx,
                         jointType = JointType.ROUND
                     )
+                    // The lap that'll actually be walked around each point, so what's drawn matches
+                    // what happens instead of just straight lines between the pins.
+                    if (state.waypointLoopMode == WaypointLoopMode.PLANT_CIRCLES) {
+                        state.waypoints.forEach { wp ->
+                            Circle(
+                                center = LatLng(wp.lat, wp.lng),
+                                radius = FlowerCircle.RADIUS_M,
+                                strokeColor = routeColor,
+                                strokeWidth = routeWidthPx / 2f,
+                                fillColor = routeColor.copy(alpha = 0.12f)
+                            )
+                        }
+                    }
                 }
 
                 state.waypoints.forEachIndexed { i, wp ->
@@ -608,6 +624,8 @@ fun MapScreen(viewModel: WalkViewModel) {
                 showSavedRoutesDialog = false
             },
             onDelete = { viewModel.deleteRoute(it) },
+            onMoveToFolder = { id, folder -> viewModel.moveRouteToFolder(id, folder) },
+            onRenameFolder = { old, new -> viewModel.renameFolder(old, new) },
             onDismiss = { showSavedRoutesDialog = false }
         )
     }
@@ -1026,6 +1044,13 @@ private fun PathTabContent(
     val waypoints = state.waypoints
     var showSaveDialog by remember { mutableStateOf(false) }
     var saveName by remember { mutableStateOf("") }
+    // Deliberately not reset between saves: saving several routes into one folder in a row is the
+    // common case, and the field is right there in the dialog if it's not the one wanted.
+    var saveFolder by remember { mutableStateOf("") }
+    val savedRoutes by viewModel.savedRoutes.collectAsState()
+    val existingFolders = remember(savedRoutes) {
+        savedRoutes.map { it.folder }.filter { it.isNotBlank() }.distinct().sorted()
+    }
 
     if (lastSavedName != null) {
         Row(
@@ -1076,11 +1101,12 @@ private fun PathTabContent(
                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ForestGreen, cursorColor = ForestGreen),
                         modifier = Modifier.fillMaxWidth()
                     )
+                    FolderPicker(saveFolder, existingFolders) { saveFolder = it }
                 }
             },
             confirmButton = {
                 Button(
-                    onClick = { viewModel.saveRoute(saveName); showSaveDialog = false },
+                    onClick = { viewModel.saveRoute(saveName, saveFolder); showSaveDialog = false },
                     shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = ForestGreen, contentColor = Color.White)
                 ) { Text("儲存", fontWeight = FontWeight.SemiBold) }
@@ -1124,6 +1150,9 @@ private fun PathTabContent(
                     ) { viewModel.setWaypointLoopMode(mode) }
                 }
             }
+            // What the currently selected mode actually does — "種花繞圈" in particular means
+            // nothing to someone seeing it for the first time.
+            Text(state.waypointLoopMode.description, fontSize = 10.sp, color = StoneGray)
         }
         if (state.isRoutePaused) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1273,11 +1302,21 @@ private fun SavedRoutesDialog(
     onShare: (SavedRoute) -> Unit,
     onImportRoute: (SavedRoute) -> Unit,
     onDelete: (String) -> Unit,
+    onMoveToFolder: (id: String, folder: String) -> Unit,
+    onRenameFolder: (oldName: String, newName: String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var pasteText by remember { mutableStateOf("") }
     var pasteError by remember { mutableStateOf(false) }
     var showImportSection by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    val clipboard = LocalClipboardManager.current
+    // Folders currently opened ("" = the 未分類 group). Everything starts collapsed except 未分類,
+    // so a big library opens as a short table of contents rather than one endless list.
+    val openFolders = remember { mutableStateListOf("") }
+    val folders = remember(savedRoutes) {
+        savedRoutes.map { it.folder }.filter { it.isNotBlank() }.distinct().sorted()
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1287,26 +1326,27 @@ private fun SavedRoutesDialog(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Collapsed by default — importing a shared route is occasional, not something
-                // that should compete for space with the route list every time this dialog opens.
-                Row(
-                    modifier = Modifier.fillMaxWidth().clickable { showImportSection = !showImportSection },
-                    verticalAlignment = Alignment.CenterVertically
+                // A real button rather than a small "收到朋友分享的路線？ ^" row — the old version
+                // gave no hint that the row itself was tappable, let alone that a paste box was
+                // hiding behind it, so people receiving a shared route never found it.
+                FilledTonalButton(
+                    onClick = { showImportSection = !showImportSection },
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)
                 ) {
-                    Text(
-                        "收到朋友分享的路線？", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Icon(
-                        if (showImportSection) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
-                        null, Modifier.size(18.dp)
-                    )
+                    Icon(Icons.Default.Download, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("匯入朋友分享的路線", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
                 if (showImportSection) {
+                    Text(
+                        "朋友傳給你的整段訊息（含「PKWK1:」開頭的那串代碼）貼進來就能匯入",
+                        fontSize = 11.sp, color = StoneGray
+                    )
                     OutlinedTextField(
                         value = pasteText,
                         onValueChange = { pasteText = it; pasteError = false },
-                        placeholder = { Text("在這裡貼上朋友傳給你的整段訊息", fontSize = 12.sp) },
+                        placeholder = { Text("貼上朋友傳給你的訊息", fontSize = 12.sp) },
                         minLines = 2,
                         maxLines = 4,
                         shape = RoundedCornerShape(10.dp),
@@ -1316,48 +1356,300 @@ private fun SavedRoutesDialog(
                     if (pasteError) {
                         Text("看起來不是有效的路線代碼", fontSize = 11.sp, color = EarthRed)
                     }
-                    Button(
-                        onClick = {
-                            val route = RouteShareCodec.decode(pasteText)
-                            if (route != null) {
-                                onImportRoute(route)
-                                pasteText = ""
-                                showImportSection = false
-                            } else {
-                                pasteError = true
-                            }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                clipboard.getText()?.text?.let { pasteText = it; pasteError = false }
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.heightIn(min = 40.dp)
+                        ) {
+                            Icon(Icons.Default.ContentPaste, null, Modifier.size(15.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("貼上", fontSize = 13.sp)
+                        }
+                        Button(
+                            onClick = {
+                                val route = RouteShareCodec.decode(pasteText)
+                                if (route != null) {
+                                    onImportRoute(route)
+                                    pasteText = ""
+                                    showImportSection = false
+                                } else {
+                                    pasteError = true
+                                }
+                            },
+                            enabled = pasteText.isNotBlank(),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = ForestGreen, contentColor = Color.White),
+                            modifier = Modifier.weight(1f).heightIn(min = 40.dp)
+                        ) { Text("匯入路線", fontWeight = FontWeight.SemiBold) }
+                    }
+                }
+
+                @Composable
+                fun RouteCard(route: SavedRoute, showFolder: Boolean) {
+                    SavedRouteCard(
+                        route = route,
+                        isSimulating = isSimulating,
+                        showFolder = showFolder,
+                        existingFolders = folders,
+                        onLoad = {
+                            onLoad(route)
+                            route.waypoints.firstOrNull()?.let { onFlyTo(it.lat, it.lng) }
                         },
-                        enabled = pasteText.isNotBlank(),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = ForestGreen, contentColor = Color.White),
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)
-                    ) { Text("匯入路線", fontWeight = FontWeight.SemiBold) }
+                        onLoadAndWalk = {
+                            onLoadAndWalk(route)
+                            route.waypoints.firstOrNull()?.let { onFlyTo(it.lat, it.lng) }
+                        },
+                        onShare = { onShare(route) },
+                        onMoveToFolder = { onMoveToFolder(route.id, it) },
+                        onDelete = { onDelete(route.id) }
+                    )
                 }
 
                 if (savedRoutes.isEmpty()) {
                     Text("尚無已存的位置或路線", fontSize = 12.sp, color = StoneGray)
                 } else {
-                    savedRoutes.forEach { route ->
-                        SavedRouteCard(
-                            route = route,
-                            isSimulating = isSimulating,
-                            onLoad = {
-                                onLoad(route)
-                                route.waypoints.firstOrNull()?.let { onFlyTo(it.lat, it.lng) }
-                            },
-                            onLoadAndWalk = {
-                                onLoadAndWalk(route)
-                                route.waypoints.firstOrNull()?.let { onFlyTo(it.lat, it.lng) }
-                            },
-                            onShare = { onShare(route) },
-                            onDelete = { onDelete(route.id) }
-                        )
+                    SearchField(query, "搜尋路線或資料夾") { query = it }
+                    val q = query.trim()
+                    when {
+                        // Searching flattens everything — a hit shouldn't be hidden inside a
+                        // collapsed folder, and shows which folder each one lives in instead.
+                        q.isNotEmpty() -> {
+                            val hits = savedRoutes.filter {
+                                it.name.contains(q, ignoreCase = true) || it.folder.contains(q, ignoreCase = true)
+                            }
+                            if (hits.isEmpty()) {
+                                Text("沒有符合「$q」的路線", fontSize = 12.sp, color = StoneGray)
+                            } else {
+                                hits.forEach { RouteCard(it, showFolder = true) }
+                            }
+                        }
+                        // No folders yet: same plain list this dialog always was.
+                        folders.isEmpty() -> savedRoutes.forEach { RouteCard(it, showFolder = false) }
+                        else -> {
+                            folders.forEach { folder ->
+                                FolderSection(
+                                    name = folder,
+                                    routes = savedRoutes.filter { it.folder == folder },
+                                    open = folder in openFolders,
+                                    onToggle = { if (folder in openFolders) openFolders.remove(folder) else openFolders.add(folder) },
+                                    onRename = { new ->
+                                        onRenameFolder(folder, new)
+                                        // Keep it open under its new name rather than snapping shut.
+                                        if (openFolders.remove(folder) && new.isNotBlank()) openFolders.add(new.trim())
+                                    },
+                                    onDissolve = { onRenameFolder(folder, ""); openFolders.remove(folder) }
+                                ) { RouteCard(it, showFolder = false) }
+                            }
+                            val unfiled = savedRoutes.filter { it.folder.isBlank() }
+                            if (unfiled.isNotEmpty()) {
+                                FolderSection(
+                                    name = "未分類",
+                                    routes = unfiled,
+                                    open = "" in openFolders,
+                                    onToggle = { if ("" in openFolders) openFolders.remove("") else openFolders.add("") },
+                                    onRename = null,
+                                    onDissolve = null
+                                ) { RouteCard(it, showFolder = false) }
+                            }
+                        }
                     }
                 }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("關閉") } }
     )
+}
+
+// ── Saved-route folders ───────────────────────────────────────────────────────
+
+@Composable
+private fun SearchField(value: String, placeholder: String, onValueChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        placeholder = { Text(placeholder, fontSize = 12.sp) },
+        leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(16.dp)) },
+        trailingIcon = if (value.isNotEmpty()) {
+            { Icon(Icons.Default.Close, "清除", Modifier.size(16.dp).clickable { onValueChange("") }) }
+        } else null,
+        singleLine = true,
+        textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
+        shape = RoundedCornerShape(10.dp),
+        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ForestGreen, cursorColor = ForestGreen),
+        modifier = Modifier.fillMaxWidth()
+    )
+}
+
+/** A free-text folder name plus one-tap chips for the folders that already exist — typing a name
+ *  nobody's used yet is how a folder gets created, so there's no separate "new folder" step. */
+@Composable
+private fun FolderPicker(value: String, existingFolders: List<String>, onValueChange: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = { onValueChange(it.take(30)) },
+            label = { Text("資料夾（選填）") },
+            singleLine = true,
+            shape = RoundedCornerShape(10.dp),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ForestGreen, cursorColor = ForestGreen),
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (existingFolders.isNotEmpty()) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                existingFolders.forEach { folder ->
+                    val selected = value.trim() == folder
+                    FilterChip(
+                        selected = selected,
+                        onClick = { onValueChange(if (selected) "" else folder) },
+                        label = { Text(folder, fontSize = 11.sp) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MoveToFolderDialog(
+    routeName: String,
+    current: String,
+    existingFolders: List<String>,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var folder by remember { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("移到資料夾", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("「$routeName」", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                FolderPicker(folder, existingFolders) { folder = it }
+                Text("輸入新名稱會自動建立資料夾；留空 = 未分類", fontSize = 11.sp, color = StoneGray)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(folder) },
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = ForestGreen, contentColor = Color.White)
+            ) { Text("移動", fontWeight = FontWeight.SemiBold) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+@Composable
+private fun RenameFolderDialog(current: String, onRename: (String) -> Unit, onDismiss: () -> Unit) {
+    var name by remember { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("重新命名資料夾", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it.take(30) },
+                label = { Text("資料夾名稱") },
+                singleLine = true,
+                shape = RoundedCornerShape(10.dp),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ForestGreen, cursorColor = ForestGreen),
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = { onRename(name) },
+                enabled = name.isNotBlank() && name.trim() != current,
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = ForestGreen, contentColor = Color.White)
+            ) { Text("確定", fontWeight = FontWeight.SemiBold) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+/** One collapsible group of routes. [onRename]/[onDissolve] are null for the 未分類 group, which
+ *  isn't a real folder and so has nothing to rename or dissolve. */
+@Composable
+private fun FolderSection(
+    name: String,
+    routes: List<SavedRoute>,
+    open: Boolean,
+    onToggle: () -> Unit,
+    onRename: ((String) -> Unit)?,
+    onDissolve: (() -> Unit)?,
+    routeContent: @Composable (SavedRoute) -> Unit
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    var showRename by remember { mutableStateOf(false) }
+    var showDissolve by remember { mutableStateOf(false) }
+
+    if (showRename && onRename != null) {
+        RenameFolderDialog(name, onRename = { onRename(it); showRename = false }, onDismiss = { showRename = false })
+    }
+    if (showDissolve && onDissolve != null) {
+        AlertDialog(
+            onDismissRequest = { showDissolve = false },
+            title = { Text("解散「$name」？", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
+            text = { Text("裡面的 ${routes.size} 條路線不會被刪除，會回到「未分類」。", fontSize = 13.sp) },
+            confirmButton = {
+                Button(
+                    onClick = { onDissolve(); showDissolve = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = EarthRed, contentColor = Color.White)
+                ) { Text("解散") }
+            },
+            dismissButton = { TextButton(onClick = { showDissolve = false }) { Text("取消") } }
+        )
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onToggle)
+                .padding(horizontal = 2.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                if (open) Icons.Default.FolderOpen else Icons.Default.Folder, null,
+                Modifier.size(16.dp), tint = ForestGreen
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                name, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
+            )
+            Text("  ${routes.size}", fontSize = 11.sp, color = StoneGray)
+            Spacer(Modifier.weight(1f))
+            if (onRename != null && onDissolve != null) {
+                Box {
+                    Icon(
+                        Icons.Default.MoreVert, "資料夾選項",
+                        Modifier.size(18.dp).clickable { menuOpen = true }, tint = StoneGray
+                    )
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(text = { Text("重新命名") }, onClick = { menuOpen = false; showRename = true })
+                        DropdownMenuItem(text = { Text("解散資料夾") }, onClick = { menuOpen = false; showDissolve = true })
+                    }
+                }
+                Spacer(Modifier.width(4.dp))
+            }
+            Icon(
+                if (open) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, null,
+                Modifier.size(18.dp), tint = StoneGray
+            )
+        }
+        if (open) routes.forEach { routeContent(it) }
+    }
 }
 
 // ── Shared small composables ──────────────────────────────────────────────────
@@ -1479,12 +1771,26 @@ private fun WaypointRow(index: Int, pt: GeoPoint, canDelete: Boolean, onDelete: 
 private fun SavedRouteCard(
     route: SavedRoute,
     isSimulating: Boolean,
+    showFolder: Boolean,
+    existingFolders: List<String>,
     onLoad: () -> Unit,
     onLoadAndWalk: () -> Unit,
     onShare: () -> Unit,
+    onMoveToFolder: (String) -> Unit,
     onDelete: () -> Unit
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showMoveDialog by remember { mutableStateOf(false) }
+
+    if (showMoveDialog) {
+        MoveToFolderDialog(
+            routeName = route.name,
+            current = route.folder,
+            existingFolders = existingFolders,
+            onConfirm = { onMoveToFolder(it); showMoveDialog = false },
+            onDismiss = { showMoveDialog = false }
+        )
+    }
 
     if (showDeleteConfirm) {
         AlertDialog(
@@ -1510,8 +1816,9 @@ private fun SavedRouteCard(
                 Spacer(Modifier.width(8.dp))
                 Text(timeSince(route.savedAt), fontSize = 9.sp, color = Color(0xFFBBBBBB))
             }
-            val subtitle = if (route.waypoints.size == 1) "單點定位"
+            val base = if (route.waypoints.size == 1) "單點定位"
                 else "${route.waypoints.size} 個路標 · ${route.loopMode.label} · ${estimateDistanceKm(route.waypoints)}"
+            val subtitle = if (showFolder && route.folder.isNotBlank()) "$base · 📁 ${route.folder}" else base
             Text(subtitle, fontSize = 9.sp, color = StoneGray)
             Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 Button(
@@ -1551,6 +1858,14 @@ private fun SavedRouteCard(
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF777777)),
                     contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
                 ) { Icon(Icons.Default.Share, "分享", Modifier.size(12.dp)) }
+                OutlinedButton(
+                    onClick = { showMoveDialog = true },
+                    modifier = Modifier.heightIn(min = 26.dp),
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(0.5.dp, Color(0xFFDDDDDD)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF777777)),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                ) { Icon(Icons.Default.Folder, "移到資料夾", Modifier.size(13.dp)) }
                 OutlinedButton(
                     onClick = { showDeleteConfirm = true },
                     modifier = Modifier.heightIn(min = 26.dp),

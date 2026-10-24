@@ -15,7 +15,7 @@ data class WalkState(
     val hasHealthPermission: Boolean = false,
     val errorMessage: String? = null,
     val waypoints: List<GeoPoint> = emptyList(),
-    val waypointLoopMode: WaypointLoopMode = WaypointLoopMode.PING_PONG,
+    val waypointLoopMode: WaypointLoopMode = WaypointLoopMode.LOOP,
     val isPathMode: Boolean = false,       // false = tapping the map replaces the single point; true = tapping appends to a path
     val isRoutePaused: Boolean = false,    // true when a route walk was stopped mid-way and can be resumed
     val currentLat: Double = 0.0,
@@ -40,8 +40,13 @@ enum class WalkSpeed(val kmh: Double, val label: String, val emoji: String) {
     FAST(5.0, "快步", "🏃")
 }
 
-enum class WaypointLoopMode(val label: String, val emoji: String) {
-    PING_PONG("來回折返", "↩"),
-    LOOP("循環回起點", "🔁"),
-    STOP_AT_END("到底定點", "🏁"),
+/** There used to be a 來回折返 (ping-pong) mode too, since removed on purpose. Routes saved or
+ *  shared with it no longer parse as a valid value and fall back to [LOOP] wherever a mode is read
+ *  back (see RouteRepository / RouteShareCodec), so old data keeps working. */
+enum class WaypointLoopMode(val label: String, val emoji: String, val description: String) {
+    LOOP("循環回起點", "🔁", "走到最後一點後接回起點，一直循環走下去"),
+    STOP_AT_END("到底定點", "🏁", "走到最後一點就停下來，定點待命"),
+    /** Walks to each waypoint, circles it once at [com.pikowalker.app.location.FlowerCircle.RADIUS_M]
+     *  radius, then moves on to the next — stopping after the last one, like [STOP_AT_END]. */
+    PLANT_CIRCLES("種花繞圈", "🌸", "每個點各繞一圈（半徑 35m）再前往下一點，走完停止，適合在定點周圍種花"),
 }

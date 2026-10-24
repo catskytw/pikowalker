@@ -30,6 +30,25 @@ class RouteRepository(context: Context) {
         _routes.value = updated
     }
 
+    /** Re-files a route without touching anything else about it — notably not [save], which would
+     *  also float it back to the top of the list as if it had just been saved. */
+    fun moveToFolder(id: String, folder: String) {
+        val clean = folder.trim()
+        val updated = _routes.value.map { if (it.id == id) it.copy(folder = clean) else it }
+        persist(updated)
+        _routes.value = updated
+    }
+
+    /** Renames a folder across every route in it. A blank [newName] dissolves the folder instead,
+     *  leaving its routes unfiled rather than deleting them. Renaming onto an existing folder's
+     *  name simply merges the two. */
+    fun renameFolder(oldName: String, newName: String) {
+        val clean = newName.trim()
+        val updated = _routes.value.map { if (it.folder == oldName) it.copy(folder = clean) else it }
+        persist(updated)
+        _routes.value = updated
+    }
+
     private fun loadFromPrefs(): List<SavedRoute> {
         val json = prefs.getString("routes", "[]") ?: "[]"
         return runCatching {
@@ -42,8 +61,9 @@ class RouteRepository(context: Context) {
                         id        = obj.getString("id"),
                         name      = obj.getString("name"),
                         loopMode  = runCatching { WaypointLoopMode.valueOf(obj.getString("loopMode")) }
-                            .getOrDefault(WaypointLoopMode.PING_PONG),
+                            .getOrDefault(WaypointLoopMode.LOOP),
                         savedAt   = obj.getLong("savedAt"),
+                        folder    = obj.optString("folder", ""),
                         waypoints = (0 until wps.length()).map { j ->
                             val wp = wps.getJSONObject(j)
                             GeoPoint(wp.getDouble("lat"), wp.getDouble("lng"))
@@ -62,6 +82,7 @@ class RouteRepository(context: Context) {
                 put("name",     r.name)
                 put("loopMode", r.loopMode.name)
                 put("savedAt",  r.savedAt)
+                put("folder",   r.folder)
                 put("waypoints", JSONArray().also { wps ->
                     r.waypoints.forEach { pt ->
                         wps.put(JSONObject().put("lat", pt.lat).put("lng", pt.lng))

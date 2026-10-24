@@ -522,7 +522,7 @@ private fun ScheduleContent(
         ) {
             Text("路線", fontSize = 14.sp, color = Color(0xFF1A1A1A), modifier = Modifier.weight(1f))
             Text(
-                selectedRoute.name,
+                selectedRoute.displayName,
                 fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = ForestGreen,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.widthIn(max = 130.dp)
@@ -532,7 +532,7 @@ private fun ScheduleContent(
         DropdownMenu(expanded = dropdownExpanded, onDismissRequest = { dropdownExpanded = false }) {
             savedRoutes.forEach { route ->
                 DropdownMenuItem(
-                    text = { Text(route.name) },
+                    text = { Text(route.displayName) },
                     onClick = {
                         dropdownExpanded = false
                         onUpdate(config.enabled, config.hour, config.minute, route.id)

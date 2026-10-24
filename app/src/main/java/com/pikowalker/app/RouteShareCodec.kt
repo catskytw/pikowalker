@@ -42,7 +42,7 @@ object RouteShareCodec {
 
             val name = obj.getString("n").take(MAX_NAME_LENGTH).ifBlank { "分享的路線" }
             val loopMode = runCatching { WaypointLoopMode.valueOf(obj.getString("m")) }
-                .getOrDefault(WaypointLoopMode.PING_PONG)
+                .getOrDefault(WaypointLoopMode.LOOP)
 
             val wpsArr = obj.getJSONArray("w")
             require(wpsArr.length() in 1..MAX_WAYPOINTS)

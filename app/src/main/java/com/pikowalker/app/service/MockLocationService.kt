@@ -17,7 +17,9 @@ import com.pikowalker.app.PikStepApp
 import com.pikowalker.app.debug.CrashLogger
 import com.pikowalker.app.debug.DebugLogger
 import com.pikowalker.app.health.HealthConnectHelper
+import com.pikowalker.app.location.FlowerCircle
 import com.pikowalker.app.location.LocationSimulator
+import com.pikowalker.app.model.WaypointLoopMode
 import com.pikowalker.app.settings.AppSettings
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -154,7 +156,14 @@ class MockLocationService : Service() {
                 // Fake GPS must already be on — this action never turns it on or off itself.
                 if (!state.isSimulating || state.waypoints.size < 2) return START_NOT_STICKY
                 loopJob?.cancel()
-                locationSimulator.setWaypoints(state.waypoints.map { it.lat to it.lng })
+                // 種花繞圈 rewrites the path into one with a lap around every waypoint up front;
+                // every other mode walks the waypoints as given.
+                locationSimulator.setWaypoints(
+                    if (state.waypointLoopMode == WaypointLoopMode.PLANT_CIRCLES)
+                        FlowerCircle.expand(state.waypoints)
+                    else
+                        state.waypoints.map { it.lat to it.lng }
+                )
                 repo.resetStats()
                 repo.setWalkingRoute(true)
                 repo.setRoutePaused(false)

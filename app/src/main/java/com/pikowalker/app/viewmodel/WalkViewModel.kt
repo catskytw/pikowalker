@@ -310,7 +310,7 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun saveRoute(name: String) {
+    fun saveRoute(name: String, folder: String = "") {
         val state = repo.currentState
         val routeName = name.ifBlank {
             if (state.waypoints.size == 1) "單點定位" else "${state.waypoints.size} 點路線"
@@ -321,7 +321,8 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
                 name      = routeName,
                 waypoints = state.waypoints,
                 loopMode  = state.waypointLoopMode,
-                savedAt   = System.currentTimeMillis()
+                savedAt   = System.currentTimeMillis(),
+                folder    = folder.trim()
             )
         )
         _lastSavedName.value = routeName
@@ -349,4 +350,6 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteRoute(id: String) = routeRepo.delete(id)
+    fun moveRouteToFolder(id: String, folder: String) = routeRepo.moveToFolder(id, folder)
+    fun renameFolder(oldName: String, newName: String) = routeRepo.renameFolder(oldName, newName)
 }

@@ -332,17 +332,29 @@ class WalkViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Loads a saved route's waypoints onto the map without starting simulation. */
+    /** Loads a saved route's waypoints onto the map without starting simulation — unless a route
+     *  is being walked right now: the service walks its own copy of the path taken when that walk
+     *  began, so merely swapping the waypoints would show the new route while the walk carried on
+     *  along the old one. In that case the new route takes over immediately, from its start. */
     fun loadRoute(savedRoute: SavedRoute) {
+        val wasWalking = repo.currentState.isWalkingRoute
+        applyRoute(savedRoute)
+        if (wasWalking) walkLoadedRoute(savedRoute.waypoints)
+    }
+
+    fun loadRouteAndWalk(savedRoute: SavedRoute) {
+        applyRoute(savedRoute)
+        walkLoadedRoute(savedRoute.waypoints)
+    }
+
+    private fun applyRoute(savedRoute: SavedRoute) {
         repo.clearWaypoints()
         savedRoute.waypoints.forEach { repo.addWaypoint(it) }
         repo.setWaypointLoopMode(savedRoute.loopMode)
         repo.setPathMode(savedRoute.waypoints.size >= 2)
     }
 
-    fun loadRouteAndWalk(savedRoute: SavedRoute) {
-        loadRoute(savedRoute)
-        val wps = savedRoute.waypoints
+    private fun walkLoadedRoute(wps: List<GeoPoint>) {
         when {
             wps.size >= 2 -> startWalkingRoute()
             wps.size == 1 -> holdAt(wps[0].lat, wps[0].lng)

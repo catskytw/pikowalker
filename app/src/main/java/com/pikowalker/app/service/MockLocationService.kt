@@ -156,7 +156,7 @@ class MockLocationService : Service() {
                 // Fake GPS must already be on — this action never turns it on or off itself.
                 if (!state.isSimulating || state.waypoints.size < 2) return START_NOT_STICKY
                 loopJob?.cancel()
-                // 種花繞圈 rewrites the path into one with a lap around every waypoint up front;
+                // 種花循環 rewrites the path into one with a lap around every waypoint up front;
                 // every other mode walks the waypoints as given.
                 locationSimulator.setWaypoints(
                     if (state.waypointLoopMode == WaypointLoopMode.PLANT_CIRCLES)

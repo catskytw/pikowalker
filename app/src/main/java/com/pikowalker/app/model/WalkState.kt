@@ -46,7 +46,11 @@ enum class WalkSpeed(val kmh: Double, val label: String, val emoji: String) {
 enum class WaypointLoopMode(val label: String, val emoji: String, val description: String) {
     LOOP("循環回起點", "🔁", "走到最後一點後接回起點，一直循環走下去"),
     STOP_AT_END("到底定點", "🏁", "走到最後一點就停下來，定點待命"),
-    /** Walks to each waypoint, circles it once at [com.pikowalker.app.location.FlowerCircle.RADIUS_M]
-     *  radius, then moves on to the next — stopping after the last one, like [STOP_AT_END]. */
-    PLANT_CIRCLES("種花繞圈", "🌸", "每個點各繞一圈（半徑 35m）再前往下一點，走完停止，適合在定點周圍種花"),
+    /** Walks to each waypoint, circles it once at [FLOWER_CIRCLE_RADIUS_M] radius, then moves on
+     *  to the next; after the last one it heads back to the first and keeps going, like [LOOP].
+     *  The constant keeps its old name so routes saved as PLANT_CIRCLES still parse. */
+    PLANT_CIRCLES("種花循環", "🌸", "每個點各繞一圈（半徑 20m）再前往下一點，繞完最後一點回到起點繼續，一直循環種下去"),
 }
+
+/** Radius of the circle walked around each waypoint in the 種花 modes, in metres. */
+const val FLOWER_CIRCLE_RADIUS_M = 20.0

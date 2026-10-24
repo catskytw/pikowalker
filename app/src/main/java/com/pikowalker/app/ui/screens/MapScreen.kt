@@ -283,8 +283,8 @@ fun MapScreen(viewModel: WalkViewModel) {
                     val coords = buildList {
                         addAll(state.waypoints)
                         when (state.waypointLoopMode) {
-                            WaypointLoopMode.LOOP -> add(state.waypoints[0])
-                            WaypointLoopMode.STOP_AT_END, WaypointLoopMode.PLANT_CIRCLES -> {}
+                            WaypointLoopMode.LOOP, WaypointLoopMode.PLANT_CIRCLES -> add(state.waypoints[0])
+                            WaypointLoopMode.STOP_AT_END -> {}
                         }
                     }
                     Polyline(
@@ -1150,7 +1150,7 @@ private fun PathTabContent(
                     ) { viewModel.setWaypointLoopMode(mode) }
                 }
             }
-            // What the currently selected mode actually does — "種花繞圈" in particular means
+            // What the currently selected mode actually does — "種花循環" in particular means
             // nothing to someone seeing it for the first time.
             Text(state.waypointLoopMode.description, fontSize = 10.sp, color = StoneGray)
         }
@@ -1253,7 +1253,7 @@ private fun CustomSpeedDialog(currentKmh: Double, onConfirm: (Double) -> Unit, o
         confirmButton = {
             Button(
                 onClick = { text.toDoubleOrNull()?.let { if (it > 0) onConfirm(it) } },
-                colors = ButtonDefaults.buttonColors(containerColor = ForestGreen)
+                colors = ButtonDefaults.buttonColors(containerColor = ForestGreen, contentColor = Color.White)
             ) { Text("確定") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
@@ -1282,7 +1282,7 @@ private fun CustomStepLimitDialog(currentLimit: Long, onConfirm: (Long) -> Unit,
         confirmButton = {
             Button(
                 onClick = { text.toLongOrNull()?.let { onConfirm(it) } },
-                colors = ButtonDefaults.buttonColors(containerColor = ForestGreen)
+                colors = ButtonDefaults.buttonColors(containerColor = ForestGreen, contentColor = Color.White)
             ) { Text("確定") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
@@ -1798,7 +1798,7 @@ private fun SavedRouteCard(
             title = { Text("刪除？", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
             text = { Text("「${route.name}」將被永久刪除。", fontSize = 13.sp) },
             confirmButton = {
-                Button(onClick = { onDelete(); showDeleteConfirm = false }, colors = ButtonDefaults.buttonColors(containerColor = EarthRed)) { Text("刪除") }
+                Button(onClick = { onDelete(); showDeleteConfirm = false }, colors = ButtonDefaults.buttonColors(containerColor = EarthRed, contentColor = Color.White)) { Text("刪除") }
             },
             dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") } }
         )

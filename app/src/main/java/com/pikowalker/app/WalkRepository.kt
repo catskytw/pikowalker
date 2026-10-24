@@ -46,7 +46,7 @@ class WalkRepository {
 
     fun clearWaypoints() = _state.update { it.copy(waypoints = emptyList(), isRoutePaused = false) }
 
-    /** Switching to or from 種花繞圈 changes the shape of the path itself (it's expanded into
+    /** Switching to or from 種花循環 changes the shape of the path itself (it's expanded into
      *  laps once, when a walk starts), not just what happens at its end like the other modes — so a
      *  paused walk can't be resumed across that switch, same as editing the waypoints. */
     fun setWaypointLoopMode(mode: WaypointLoopMode) = _state.update {

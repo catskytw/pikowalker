@@ -246,12 +246,12 @@ class LocationSimulator(private val context: Context) {
                 wpLat = target.first; wpLng = target.second
                 remainingM -= dist
                 when (loopMode) {
-                    WaypointLoopMode.LOOP -> {
+                    // PLANT_CIRCLES walks a path already expanded into circles (see FlowerCircle) —
+                    // by the time it gets here it's just a plain looping polyline.
+                    WaypointLoopMode.LOOP, WaypointLoopMode.PLANT_CIRCLES -> {
                         wpIndex = (wpIndex + 1) % wpList.size
                     }
-                    // PLANT_CIRCLES walks a path already expanded into circles (see FlowerCircle) —
-                    // by the time it gets here it's just a plain run-to-the-end polyline.
-                    WaypointLoopMode.STOP_AT_END, WaypointLoopMode.PLANT_CIRCLES -> {
+                    WaypointLoopMode.STOP_AT_END -> {
                         if (wpIndex < wpList.size - 1) {
                             wpIndex++
                         } else {

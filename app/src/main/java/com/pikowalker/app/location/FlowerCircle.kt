@@ -1,5 +1,6 @@
 package com.pikowalker.app.location
 
+import com.pikowalker.app.model.FLOWER_CIRCLE_RADIUS_M
 import com.pikowalker.app.model.GeoPoint
 import kotlin.math.cos
 import kotlin.math.sin
@@ -10,31 +11,25 @@ import kotlin.math.sin
  *  teaching [LocationSimulator.tick] a new kind of movement — the existing "follow these points in
  *  order" logic (arrival, carry-over of leftover distance, bearing) then works on circles for free. */
 object FlowerCircle {
-    const val RADIUS_M = 35.0
+    const val RADIUS_M = FLOWER_CIRCLE_RADIUS_M
 
-    /** A lap is approximated by this many chords. At a 35 m radius that's a 0.13 m gap between
+    /** A lap is approximated by this many chords. At a 20 m radius that's a 0.08 m gap between
      *  chord and true arc — well under the ~1.2 m of GPS jitter [LocationSimulator] adds anyway. */
     private const val SEGMENTS = 36
 
     /** Per waypoint: center, the point on the circle facing the next waypoint, a full clockwise lap
      *  back to that same point, then on to the next waypoint's center. Starting the lap on the side
      *  facing the next waypoint means the walk out of the circle toward it is the shortest one.
-     *  The last waypoint has no next one — it faces back toward the previous one instead, and the
-     *  path ends back on its center so the final resting position is the spot itself rather than
-     *  somewhere 35 m off it. */
+     *  The path is meant to be walked as a loop (the simulator wraps from the last point back to the
+     *  first), so the last waypoint faces the first one and no closing point is appended. */
     fun expand(points: List<GeoPoint>): List<Pair<Double, Double>> {
-        val out = ArrayList<Pair<Double, Double>>(points.size * (SEGMENTS + 3))
+        val out = ArrayList<Pair<Double, Double>>(points.size * (SEGMENTS + 2))
         points.forEachIndexed { i, center ->
-            val facing = when {
-                i < points.lastIndex -> bearing(center, points[i + 1])
-                i > 0 -> bearing(center, points[i - 1])
-                else -> 0.0
-            }
+            val facing = if (points.size > 1) bearing(center, points[(i + 1) % points.size]) else 0.0
             out.add(center.lat to center.lng)
             for (k in 0..SEGMENTS) {
                 out.add(offset(center, facing + k * 360.0 / SEGMENTS, RADIUS_M))
             }
-            if (i == points.lastIndex) out.add(center.lat to center.lng)
         }
         return out
     }

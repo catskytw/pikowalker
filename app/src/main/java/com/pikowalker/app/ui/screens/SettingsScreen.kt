@@ -725,7 +725,7 @@ private fun StepCorrectionContent(todaySteps: Long, onApply: (Long) -> Unit) {
                 showConfirm = true
             },
             enabled = input.toLongOrNull() != null,
-            colors = ButtonDefaults.buttonColors(containerColor = ForestGreen),
+            colors = ButtonDefaults.buttonColors(containerColor = ForestGreen, contentColor = Color.White),
             shape = RoundedCornerShape(8.dp)
         ) { Text("套用") }
     }
@@ -743,7 +743,7 @@ private fun StepCorrectionContent(todaySteps: Long, onApply: (Long) -> Unit) {
             confirmButton = {
                 Button(
                     onClick = { onApply(pendingTarget); showConfirm = false; input = "" },
-                    colors = ButtonDefaults.buttonColors(containerColor = ForestGreen)
+                    colors = ButtonDefaults.buttonColors(containerColor = ForestGreen, contentColor = Color.White)
                 ) { Text("確定") }
             },
             dismissButton = { TextButton(onClick = { showConfirm = false }) { Text("取消") } }

@@ -97,6 +97,8 @@ dependencies {
     // Google Maps (native vector rendering, proper density-aware label sizing, custom JSON styling)
     implementation("com.google.android.gms:play-services-maps:19.0.0")
     implementation("com.google.maps.android:maps-compose:4.4.1")
+    // Only for LocationProbe's diagnostic logging of what the fused client delivers while faking GPS
+    implementation("com.google.android.gms:play-services-location:21.3.0")
 
     // Crashlytics (automatic crash/ANR upload — CrashLogger's local reports still need the user
     // to manually export and share them; this gets the same data without that step, including

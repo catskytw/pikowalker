@@ -18,6 +18,7 @@ import com.pikowalker.app.debug.CrashLogger
 import com.pikowalker.app.debug.DebugLogger
 import com.pikowalker.app.health.HealthConnectHelper
 import com.pikowalker.app.location.FlowerCircle
+import com.pikowalker.app.location.LocationProbe
 import com.pikowalker.app.location.LocationSimulator
 import com.pikowalker.app.model.WaypointLoopMode
 import com.pikowalker.app.settings.AppSettings
@@ -84,6 +85,7 @@ class MockLocationService : Service() {
     }
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob() + serviceExceptionHandler)
     private lateinit var locationSimulator: LocationSimulator
+    private lateinit var locationProbe: LocationProbe
     private lateinit var healthConnectHelper: HealthConnectHelper
     private var wakeLock: PowerManager.WakeLock? = null
     private var loopJob: kotlinx.coroutines.Job? = null
@@ -116,6 +118,11 @@ class MockLocationService : Service() {
         locationSimulator.onPersistentFailure = {
             repo.setError("模擬定位似乎被系統關閉，已嘗試自動修復但未成功\n請完全停止再重新開始偽造GPS")
         }
+        locationProbe = LocationProbe(
+            this,
+            simulatedPosition = { locationSimulator.currentLat to locationSimulator.currentLng },
+            maxPushGapMs = { locationSimulator.takeMaxPushGapMs() },
+        )
         healthConnectHelper = HealthConnectHelper(this)
         createNotificationChannel()
     }
@@ -135,6 +142,7 @@ class MockLocationService : Service() {
                     return START_NOT_STICKY
                 }
                 locationSimulator.teleport(lat, lng)
+                locationProbe.start()
                 repo.updateCurrentPosition(lat, lng)
                 repo.setSimulating(true)
                 repo.setWalkingRoute(false)
@@ -356,6 +364,7 @@ class MockLocationService : Service() {
         DebugLogger.log("Service", "onDestroy pid=${android.os.Process.myPid()}")
         super.onDestroy()
         loopJob?.cancel()
+        locationProbe.stop()
         locationSimulator.stop()
         repo.setSimulating(false)
         repo.setWalkingRoute(false)

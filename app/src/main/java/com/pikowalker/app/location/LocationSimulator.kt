@@ -59,6 +59,15 @@ class LocationSimulator(private val context: Context) {
 
     private val rng = Random(System.nanoTime())
 
+    // Longest gap between two consecutive pushes since the last [takeMaxPushGapMs] — read by
+    // LocationProbe's heartbeat to show whether the push rate ever sagged (loop stalled by the
+    // OS), which is the one thing a "consumer fell back to the real fix" theory would hinge on.
+    private var lastPushElapsedMs = 0L
+    private var maxPushGapMs = 0L
+
+    @Synchronized
+    fun takeMaxPushGapMs(): Long = maxPushGapMs.also { maxPushGapMs = 0L }
+
     @Synchronized
     fun setCenter(lat: Double, lng: Double) {
         wpLat = lat; wpLng = lng
@@ -194,6 +203,7 @@ class LocationSimulator(private val context: Context) {
             fusedProviderAdded = false
         }
         wpIndex = 0; reachedEnd = false
+        lastPushElapsedMs = 0L; maxPushGapMs = 0L
         // Reset so a fresh session doesn't inherit a near-threshold streak from whatever the
         // previous session ended on — otherwise a handful of failures right after restarting
         // could immediately fire onPersistentFailure for a session that just began.
@@ -366,6 +376,9 @@ class LocationSimulator(private val context: Context) {
     private fun pushLocation(lat: Double, lng: Double, speed: Float, bearing: Float? = null) {
         val time = System.currentTimeMillis()
         val elapsed = SystemClock.elapsedRealtimeNanos()
+        val elapsedMs = elapsed / 1_000_000L
+        if (lastPushElapsedMs != 0L) maxPushGapMs = maxOf(maxPushGapMs, elapsedMs - lastPushElapsedMs)
+        lastPushElapsedMs = elapsedMs
         val providers = buildList {
             if (gpsProviderAdded) add(LocationManager.GPS_PROVIDER)
             if (networkProviderAdded) add(LocationManager.NETWORK_PROVIDER)

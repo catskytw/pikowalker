@@ -49,8 +49,8 @@ enum class WaypointLoopMode(val label: String, val emoji: String, val descriptio
     /** Walks to each waypoint, circles it once at [FLOWER_CIRCLE_RADIUS_M] radius, then moves on
      *  to the next; after the last one it heads back to the first and keeps going, like [LOOP].
      *  The constant keeps its old name so routes saved as PLANT_CIRCLES still parse. */
-    PLANT_CIRCLES("種花循環", "🌸", "每個點各繞一圈（半徑 20m）再前往下一點，繞完最後一點回到起點繼續，一直循環種下去"),
+    PLANT_CIRCLES("種花循環", "🌸", "每個點各繞一圈（半徑 25m）再前往下一點，繞完最後一點回到起點繼續，一直循環種下去"),
 }
 
 /** Radius of the circle walked around each waypoint in the 種花 modes, in metres. */
-const val FLOWER_CIRCLE_RADIUS_M = 20.0
+const val FLOWER_CIRCLE_RADIUS_M = 25.0

@@ -13,7 +13,7 @@ import kotlin.math.sin
 object FlowerCircle {
     const val RADIUS_M = FLOWER_CIRCLE_RADIUS_M
 
-    /** A lap is approximated by this many chords. At a 20 m radius that's a 0.08 m gap between
+    /** A lap is approximated by this many chords. At a 25 m radius that's a 0.10 m gap between
      *  chord and true arc — well under the ~1.2 m of GPS jitter [LocationSimulator] adds anyway. */
     private const val SEGMENTS = 36
 
